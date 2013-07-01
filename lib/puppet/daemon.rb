@@ -127,74 +127,98 @@ class Puppet::Daemon
     run_event_loop
   end
 
-  def run_event_loop
-    # Now, we loop waiting for either the configuration file to change, or the
-    # next agent run to be due.  Fun times.
-    #
-    # We want to trigger the reparse if 15 seconds passed since the previous
-    # wakeup, and the agent run if Puppet[:runinterval] seconds have passed
-    # since the previous wakeup.
-    #
-    # We always want to run the agent on startup, so it was always before now.
-    # Because 0 means "continuously run", `to_i` does the right thing when the
-    # input is strange or badly formed by returning 0.  Integer will raise,
-    # which we don't want, and we want to protect against -1 or below.
-    next_agent_run = 0
-    agent_run_interval = [Puppet[:runinterval].to_i, 0].max
+  #### Modified Event Loop Code by Thomas Haggett ####
+  ####           thomas@freeagent.com             ####
+  # Public: Return the next event time based on a given interval.
+  #
+  #   interval    - the time interval of this event (in seconds)
+  #   splay       - if true, a host-consistent offset is added to the time
+  #
+  # Returns Time object
+  def next_event_time(interval, splay=false)
+    offset = if splay
+      Digest::MD5.hexdigest(Facter[:fqdn].value).to_i(16) % interval
+    else
+      0
+    end
 
-    # We may not want to reparse; that can be disable.  Fun times.
-    next_reparse = 0
-    reparse_interval = Puppet[:filetimeout].to_i
-
-    loop do
-      now = Time.now.to_i
-
-      # We set a default wakeup of "one hour from now", which will
-      # recheck everything at a minimum every hour.  Just in case something in
-      # the math messes up or something; it should be inexpensive enough to
-      # wake once an hour, then go back to sleep after doing nothing, if
-      # someone only wants listen mode.
-      next_event = now + 60 * 60
-
-      # Handle reparsing of configuration files, if desired and required.
-      # `reparse` will just check if the action is required, and would be
-      # better named `reparse_if_changed` instead.
-      if reparse_interval > 0 and now >= next_reparse
-        Puppet.settings.reparse
-
-        # The time to the next reparse might have changed, so recalculate
-        # now.  That way we react dynamically to reconfiguration.
-        reparse_interval = Puppet[:filetimeout].to_i
-
-        # Set up the next reparse check based on the new reparse_interval.
-        if reparse_interval > 0
-          next_reparse = now + reparse_interval
-          next_event > next_reparse and next_event = next_reparse
-        end
-
-        # We should also recalculate the agent run interval, and adjust the
-        # next time it is scheduled to run, just in case.  In the event that
-        # we made no change the result will be a zero second adjustment.
-        new_run_interval    = [Puppet[:runinterval].to_i, 0].max
-        next_agent_run     += agent_run_interval - new_run_interval
-        agent_run_interval  = new_run_interval
-      end
-
-      # Handle triggering another agent run.  This will block the next check
-      # for configuration reparsing, which is a desired and deliberate
-      # behaviour.  You should not change that. --daniel 2012-02-21
-      if agent and now >= next_agent_run
-        agent.run
-
-        # Set up the next agent run time
-        next_agent_run = now + agent_run_interval
-        next_event > next_agent_run and next_event = next_agent_run
-      end
-
-      # Finally, an interruptable able sleep until the next scheduled event.
-      how_long = next_event - now
-      how_long > 0 and select([], [], [], how_long)
+    next_run = Time.at((Time.now.to_i / interval).to_i * interval) + offset
+    if next_run <= Time.now
+      next_run + interval
+    else
+      next_run
     end
   end
-end
 
+  # Private: Dispatches the events of different types
+  def dispatch_event(event)
+    case event
+    when :agent
+      agent.run
+    when :reparse
+      Puppet.settings.reparse
+    end
+  end
+
+  # Private: Emits a hash of events to monitor
+  # 
+  # Returns a hash { :events => { key => interval }, :splay => [ key, key2 ] }
+  def configure_events
+    {
+      :events => {
+        :tick => 3600,
+        :agent => Puppet[:runinterval]
+      },
+      :splay => [:agent]
+    }.tap do |output|
+      reparse_interval = Puppet[:filetimeout].to_i
+      output[:events][:reparse] = reparse_interval if reparse_interval > 0
+    end
+  end
+
+  def run_event_loop
+
+    # This maintains a dictionary of timestamps keyed against the event names
+    times = {}
+    events = {}
+
+    loop do
+      # we configure the events on each run to cope with configuration reloads and
+      # the like
+      config = configure_events
+
+      # re-generate any missing times
+      config[:events].each_pair do |key,interval|
+        unless times[key]
+          times[key] = next_event_time(interval, config[:splay].include?(key)) 
+          Puppet.notice("Next #{key} run will be at #{times[key]}")
+        end
+      end
+
+      # Pick out the earliest timestamp of the set
+      next_event_time = times.values.min || (Time.now + 30) 
+
+      # if it's in the future, sleep until now is then...
+      sleep_interval = if next_event_time > Time.now
+        next_event_time.to_f - Time.now.to_f
+      else
+        # Always sleep for a second, just to avoid accidental tight loops!
+        1
+      end  
+      select([], [], [], sleep_interval)
+
+      # Now, lets go through our event set and run any who's time-stamp is leq Time.now()
+      #
+      # IT's worth noting that, if the event execution steps over another event's timestamp, then the loop
+      # will recycle and we just won't sleep the next time around.
+      #
+      times.each_pair do |key,timestamp|
+        if timestamp < Time.now
+          times[key] = nil
+          dispatch_event(key)
+        end
+      end
+    end
+  end
+
+end
