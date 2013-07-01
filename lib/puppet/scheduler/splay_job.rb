@@ -5,8 +5,6 @@ module Puppet::Scheduler
     def initialize(run_interval, splay_limit, &block)
       @splay = calculate_splay(splay_limit)
 
-      Puppet.info("Splay is #{@splay}")
-
       super(run_interval, &block)
     end
 
@@ -22,8 +20,6 @@ module Puppet::Scheduler
       else
         next_run
       end
-
-      Puppet.info("Next run is at #{next_run}")
 
       # Now, calculate the interval
       next_run - time
