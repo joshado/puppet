@@ -4,7 +4,6 @@ module Puppet::Scheduler
 
     def initialize(run_interval, splay_limit, &block)
       @splay = calculate_splay(splay_limit)
-
       super(run_interval, &block)
     end
 
@@ -40,7 +39,7 @@ module Puppet::Scheduler
     #
     # limit - the limit / max-value of the splay
     #
-    # Returns an integer that should be (0..limit)
+    # Returns an integer that should be (0...limit)
     def calculate_splay(limit)
       Digest::MD5.hexdigest(Facter[:fqdn].value).to_i(16) % limit
     rescue
