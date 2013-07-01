@@ -2,8 +2,6 @@ require 'puppet/application'
 
 class Puppet::Application::Kick < Puppet::Application
 
-  should_not_parse_config
-
   attr_accessor :hosts, :tags, :classes
 
   option("--all","-a")
@@ -11,6 +9,7 @@ class Puppet::Application::Kick < Puppet::Application
   option("--debug","-d")
   option("--ping","-P")
   option("--test")
+  option("--ignoreschedules")
 
   option("--host HOST") do |arg|
     @hosts << arg
@@ -146,6 +145,9 @@ with '--genconfig'.
   forking for each client to which to connect. The default is 1, meaning
   serial execution.
 
+* --puppetport:
+  Use the specified TCP port to connect to agents. Defaults to 8139.
+
 * --tag:
   Specify a tag for selecting the objects to apply. Does not work with
   the --test option.
@@ -262,8 +264,7 @@ Copyright (c) 2011 Puppet Labs, LLC Licensed under the Apache 2.0 License
       result = run.status
       puts "status is #{result}"
     rescue => detail
-      puts detail.backtrace if Puppet[:trace]
-      $stderr.puts "Host #{host} failed: #{detail}\n"
+      Puppet.log_exception(detail, "Host #{host} failed: #{detail}\n")
       exit(2)
     end
 
@@ -301,7 +302,9 @@ Copyright (c) 2011 Puppet Labs, LLC Licensed under the Apache 2.0 License
   end
 
   def setup
+    super()
     raise Puppet::Error.new("Puppet kick is not supported on Microsoft Windows") if Puppet.features.microsoft_windows?
+    Puppet.warning "Puppet kick is deprecated. See http://links.puppetlabs.com/puppet-kick-deprecation"
 
     if options[:debug]
       Puppet::Util::Log.level = :debug
@@ -309,10 +312,7 @@ Copyright (c) 2011 Puppet Labs, LLC Licensed under the Apache 2.0 License
       Puppet::Util::Log.level = :info
     end
 
-    # Now parse the config
-    Puppet.parse_config
-
-    if Puppet[:node_terminus] == "ldap" and (options[:all] or @classes)
+    if Puppet[:node_terminus] == :ldap and (options[:all] or @classes)
       if options[:all]
         @hosts = Puppet::Node.indirection.search("whatever", :fqdn => options[:fqdn]).collect { |node| node.name }
         puts "all: #{@hosts.join(", ")}"

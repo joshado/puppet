@@ -1,4 +1,4 @@
-#! /usr/bin/env ruby -S rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 require 'puppet/indirector/catalog/static_compiler'
 require 'puppet/file_serving/metadata'
@@ -137,7 +137,7 @@ describe Puppet::Resource::Catalog::StaticCompiler do
     # a real fileserver initialized for testing.
     Puppet::FileServing::Metadata.
       indirection.stubs(:find).
-      with(options[:source].sub('puppet:///','')).
+      with() { |*args| args[0] == options[:source].sub('puppet:///','') and args[1] == {:links => :manage, :environment => nil}}.
       returns(fake_fileserver_metadata)
 
     # I want a resource that all the file resources require and another

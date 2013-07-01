@@ -44,44 +44,62 @@ RSpec::Matchers.define :exit_with do |expected|
   end
 end
 
+class HavePrintedMatcher
+  attr_accessor :expected, :actual
 
-RSpec::Matchers.define :have_printed do |expected|
-  match do |block|
-    $stderr = $stdout = StringIO.new
+  def initialize(expected)
+    case expected
+    when String, Regexp
+      @expected = expected
+    else
+      @expected = expected.to_s
+    end
+  end
 
+  def matches?(block)
     begin
+      $stderr = $stdout = StringIO.new
       block.call
-    ensure
       $stdout.rewind
       @actual = $stdout.read
-
+    ensure
       $stdout = STDOUT
       $stderr = STDERR
     end
 
     if @actual then
-      case expected
+      case @expected
       when String
-        @actual.include? expected
+        @actual.include? @expected
       when Regexp
-        expected.match @actual
-      else
-        raise ArgumentError, "No idea how to match a #{@actual.class.name}"
+        @expected.match @actual
       end
-    end
-  end
-
-  failure_message_for_should do |actual|
-    if actual.nil? then
-      "expected #{expected.inspect}, but nothing was printed"
     else
-      "expected #{expected.inspect} to be printed; got:\n#{actual}"
+      false
     end
   end
 
-  description do
-    "expect #{expected.inspect} to be printed"
+  def failure_message_for_should
+    if @actual.nil? then
+      "expected #{@expected.inspect}, but nothing was printed"
+    else
+      "expected #{@expected.inspect} to be printed; got:\n#{@actual}"
+    end
   end
 
-  diffable
+  def description
+    "expect #{@expected.inspect} to be printed"
+  end
+end
+
+def have_printed(what)
+  HavePrintedMatcher.new(what)
+end
+
+RSpec::Matchers.define :equal_attributes_of do |expected|
+  match do |actual|
+    actual.instance_variables.all? do |attr|
+      actual.instance_variable_get(attr) == expected.instance_variable_get(attr)
+    end
+  end
 end

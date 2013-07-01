@@ -48,6 +48,10 @@ module Puppet::FileBucketFile
       instance.to_s
     end
 
+    def validate_key(request)
+      # There are no ACLs on filebucket files so validating key is not important
+    end
+
     private
 
     def path_match(dir_path, files_original_path)
@@ -67,9 +71,10 @@ module Puppet::FileBucketFile
       dir_path = path_for(bucket_file.bucket_path, bucket_file.checksum_data)
       paths_path = ::File.join(dir_path, 'paths')
 
-      # If the file already exists, do nothing.
+      # If the file already exists, touch it.
       if ::File.exist?(filename)
         verify_identical_file!(bucket_file)
+        ::FileUtils.touch(filename)
       else
         # Make the directories if necessary.
         unless ::File.directory?(dir_path)

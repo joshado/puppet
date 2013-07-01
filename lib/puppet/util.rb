@@ -1,8 +1,8 @@
 # A module to collect utility functions.
 
 require 'English'
-require 'puppet/util/monkey_patches'
 require 'puppet/external/lock'
+require 'puppet/error'
 require 'puppet/util/execution_stub'
 require 'uri'
 require 'sync'
@@ -13,11 +13,8 @@ require 'ostruct'
 require 'puppet/util/platform'
 
 module Puppet
-  # A command failed to execute.
-  require 'puppet/error'
-  class ExecutionFailure < Puppet::Error
-  end
 module Util
+  require 'puppet/util/monkey_patches'
   require 'benchmark'
 
   # These are all for backward compatibility -- these are methods that used
@@ -27,6 +24,7 @@ module Util
 
   @@sync_objects = {}.extend MonitorMixin
 
+
   def self.activerecord_version
     if (defined?(::ActiveRecord) and defined?(::ActiveRecord::VERSION) and defined?(::ActiveRecord::VERSION::MAJOR) and defined?(::ActiveRecord::VERSION::MINOR))
       ([::ActiveRecord::VERSION::MAJOR, ::ActiveRecord::VERSION::MINOR].join('.').to_f)
@@ -34,6 +32,36 @@ module Util
       0
     end
   end
+
+
+  # Run some code with a specific environment.  Resets the environment back to
+  # what it was at the end of the code.
+  def self.withenv(hash)
+    saved = ENV.to_hash
+    hash.each do |name, val|
+      ENV[name.to_s] = val
+    end
+
+    yield
+  ensure
+    ENV.clear
+    saved.each do |name, val|
+      ENV[name] = val
+    end
+  end
+
+
+  # Execute a given chunk of code with a new umask.
+  def self.withumask(mask)
+    cur = File.umask(mask)
+
+    begin
+      yield
+    ensure
+      File.umask(cur)
+    end
+  end
+
 
   def self.synchronize_on(x,type)
     sync_object,users = 0,1
@@ -122,16 +150,6 @@ module Util
     end
   end
 
-  # Execute a given chunk of code with a new umask.
-  def self.withumask(mask)
-    cur = File.umask(mask)
-
-    begin
-      yield
-    ensure
-      File.umask(cur)
-    end
-  end
 
   def benchmark(*args)
     msg = args.pop
@@ -167,6 +185,13 @@ module Util
     end
   end
 
+  # Resolve a path for an executable to the absolute path. This tries to behave
+  # in the same manner as the unix `which` command and uses the `PATH`
+  # environment variable.
+  #
+  # @api public
+  # @param bin [String] the name of the executable to find.
+  # @return [String] the absolute path to the found executable.
   def which(bin)
     if absolute_path?(bin)
       return bin if FileTest.file? bin and FileTest.executable? bin
@@ -174,6 +199,21 @@ module Util
       ENV['PATH'].split(File::PATH_SEPARATOR).each do |dir|
         begin
           dest = File.expand_path(File.join(dir, bin))
+        rescue ArgumentError => e
+          # if the user's PATH contains a literal tilde (~) character and HOME is not set, we may get
+          # an ArgumentError here.  Let's check to see if that is the case; if not, re-raise whatever error
+          # was thrown.
+          if e.to_s =~ /HOME/ and (ENV['HOME'].nil? || ENV['HOME'] == "")
+            # if we get here they have a tilde in their PATH.  We'll issue a single warning about this and then
+            # ignore this path element and carry on with our lives.
+            Puppet::Util::Warnings.warnonce("PATH contains a ~ character, and HOME is not set; ignoring PATH element '#{dir}'.")
+          elsif e.to_s =~ /doesn't exist|can't find user/
+            # ...otherwise, we just skip the non-existent entry, and do nothing.
+            Puppet::Util::Warnings.warnonce("Couldn't expand PATH containing a ~ character; ignoring PATH element '#{dir}'.")
+          else
+            raise
+          end
+        else
           if Puppet.features.microsoft_windows? && File.extname(dest).empty?
             exts = ENV['PATHEXT']
             exts = exts ? exts.split(File::PATH_SEPARATOR) : %w[.COM .EXE .BAT .CMD]
@@ -183,9 +223,6 @@ module Util
             end
           end
           return dest if FileTest.file? dest and FileTest.executable? dest
-        rescue ArgumentError => e
-          raise unless e.to_s =~ /doesn't exist|can't find user/
-          # ...otherwise, we just skip the non-existent entry, and do nothing.
         end
       end
     end
@@ -202,18 +239,6 @@ module Util
   AbsolutePathWindows = %r!^(?:(?:[A-Z]:#{slash})|(?:#{slash}#{slash}#{label}#{slash}#{label})|(?:#{slash}#{slash}\?#{slash}#{label}))!io
   AbsolutePathPosix   = %r!^/!
   def absolute_path?(path, platform=nil)
-    # When running an internal subcommand (Application), the app requires puppet
-    # which loads features, which creates an autoloader, which calls this method.
-    # In that case, it isn't necessary to require puppet. When running an external
-    # subcommand or if none was specified, then the CommandLine will call the
-    # `which` method to resolve the external executable, and that requires features.
-    # Rather then moving this require to handle the external subcommand case, or
-    # no subcommand case, I'm undoing the performance change from 20efe94. This
-    # code has been eliminated in 3.x since puppet can be required before loading
-    # the application (since the default vardir/confdir locations are solely
-    # based on user vs. system user, and not the application's run_mode).
-    require 'puppet'
-
     # Ruby only sets File::ALT_SEPARATOR on Windows and the Ruby standard
     # library uses that to test what platform it's on.  Normally in Puppet we
     # would use Puppet.features.microsoft_windows?, but this method needs to
@@ -278,72 +303,6 @@ module Util
   end
   module_function :uri_to_path
 
-  # Execute the provided command with STDIN connected to a pipe, yielding the
-  # pipe object.  That allows data to be fed to that subprocess.
-  #
-  # The command can be a simple string, which is executed as-is, or an Array,
-  # which is treated as a set of command arguments to pass through.#
-  #
-  # In all cases this is passed directly to the shell, and STDOUT and STDERR
-  # are connected together during execution.
-  def execpipe(command, failonfail = true)
-    if respond_to? :debug
-      debug "Executing '#{command}'"
-    else
-      Puppet.debug "Executing '#{command}'"
-    end
-
-    # Paste together an array with spaces.  We used to paste directly
-    # together, no spaces, which made for odd invocations; the user had to
-    # include whitespace between arguments.
-    #
-    # Having two spaces is really not a big drama, since this passes to the
-    # shell anyhow, while no spaces makes for a small developer cost every
-    # time this is invoked. --daniel 2012-02-13
-    command_str = command.respond_to?(:join) ? command.join(' ') : command
-    output = open("| #{command_str} 2>&1") do |pipe|
-      yield pipe
-    end
-
-    if failonfail
-      unless $CHILD_STATUS == 0
-        raise ExecutionFailure, output
-      end
-    end
-
-    output
-  end
-
-  def execfail(command, exception)
-      output = execute(command)
-      return output
-  rescue ExecutionFailure
-      raise exception, output
-  end
-
-  def execute_posix(command, arguments, stdin, stdout, stderr)
-    child_pid = safe_posix_fork(stdin, stdout, stderr) do
-      # We can't just call Array(command), and rely on it returning
-      # things like ['foo'], when passed ['foo'], because
-      # Array(command) will call command.to_a internally, which when
-      # given a string can end up doing Very Bad Things(TM), such as
-      # turning "/tmp/foo;\r\n /bin/echo" into ["/tmp/foo;\r\n", " /bin/echo"]
-      command = [command].flatten
-      Process.setsid
-      begin
-        Puppet::Util::SUIDManager.change_privileges(arguments[:uid], arguments[:gid], true)
-
-        ENV['LANG'] = ENV['LC_ALL'] = ENV['LC_MESSAGES'] = ENV['LANGUAGE'] = 'C'
-        Kernel.exec(*command)
-      rescue => detail
-        puts detail.to_s
-        exit!(1)
-      end
-    end
-    child_pid
-  end
-  module_function :execute_posix
-
   def safe_posix_fork(stdin=$stdin, stdout=$stdout, stderr=$stderr, &block)
     child_pid = Kernel.fork do
       $stdin.reopen(stdin)
@@ -358,104 +317,10 @@ module Util
   end
   module_function :safe_posix_fork
 
-  def execute_windows(command, arguments, stdin, stdout, stderr)
-    command = command.map do |part|
-      part.include?(' ') ? %Q["#{part.gsub(/"/, '\"')}"] : part
-    end.join(" ") if command.is_a?(Array)
-
-    Puppet::Util::Windows::Process.execute(command, arguments, stdin, stdout, stderr)
-  end
-  module_function :execute_windows
-
-  # Execute the desired command, and return the status and output.
-  # def execute(command, failonfail = true, uid = nil, gid = nil)
-  # :combine sets whether or not to combine stdout/stderr in the output
-  # :stdinfile sets a file that can be used for stdin. Passing a string
-  # for stdin is not currently supported.
-  def execute(command, arguments = {:failonfail => true, :combine => true})
-    if command.is_a?(Array)
-      command = command.flatten.map(&:to_s)
-      str = command.join(" ")
-    elsif command.is_a?(String)
-      str = command
-    end
-
-    if respond_to? :debug
-      debug "Executing '#{str}'"
-    else
-      Puppet.debug "Executing '#{str}'"
-    end
-
-    null_file = Puppet.features.microsoft_windows? ? 'NUL' : '/dev/null'
-
-    stdin = File.open(arguments[:stdinfile] || null_file, 'r')
-    stdout = arguments[:squelch] ? File.open(null_file, 'w') : Tempfile.new('puppet')
-    stderr = arguments[:combine] ? stdout : File.open(null_file, 'w')
-
-    exec_args = [command, arguments, stdin, stdout, stderr]
-
-    if execution_stub = Puppet::Util::ExecutionStub.current_value
-      return execution_stub.call(*exec_args)
-    elsif Puppet.features.posix?
-      child_pid = execute_posix(*exec_args)
-      exit_status = Process.waitpid2(child_pid).last.exitstatus
-    elsif Puppet.features.microsoft_windows?
-      process_info = execute_windows(*exec_args)
-      begin
-        exit_status = Puppet::Util::Windows::Process.wait_process(process_info.process_handle)
-      ensure
-        Process.CloseHandle(process_info.process_handle)
-        Process.CloseHandle(process_info.thread_handle)
-      end
-    end
-
-    [stdin, stdout, stderr].each {|io| io.close rescue nil}
-
-    # read output in if required
-    unless arguments[:squelch]
-      output = wait_for_output(stdout)
-      Puppet.warning "Could not get output" unless output
-    end
-
-    if arguments[:failonfail] and exit_status != 0
-      raise ExecutionFailure, "Execution of '#{str}' returned #{exit_status}: #{output}"
-    end
-
-    output
-  end
-
-  module_function :execute
-
-  def wait_for_output(stdout)
-    # Make sure the file's actually been written.  This is basically a race
-    # condition, and is probably a horrible way to handle it, but, well, oh
-    # well.
-    2.times do |try|
-      if File.exists?(stdout.path)
-        stdout.open
-        begin
-          return stdout.read
-        ensure
-          stdout.close
-          stdout.unlink
-        end
-      else
-        time_to_sleep = try / 2.0
-        Puppet.warning "Waiting for output; will sleep #{time_to_sleep} seconds"
-        sleep(time_to_sleep)
-      end
-    end
-    nil
-  end
-  module_function :wait_for_output
-
   # Create an exclusive lock.
   def threadlock(resource, type = Sync::EX)
     Puppet::Util.synchronize_on(resource,type) { yield }
   end
-
-  # Because some modules provide their own version of this method.
-  alias util_execute execute
 
   module_function :benchmark
 
@@ -470,38 +335,15 @@ module Util
     end
   end
 
-  def symbolize(value)
-    Puppet.deprecation_warning "symbolize is deprecated. Call the intern method on the object instead."
-    if value.respond_to? :intern
-      value.intern
-    else
-      value
-    end
-  end
-
   def symbolizehash(hash)
     newhash = {}
     hash.each do |name, val|
-      if name.is_a? String
-        newhash[name.intern] = val
-      else
-        newhash[name] = val
-      end
+      name = name.intern if name.respond_to? :intern
+      newhash[name] = val
     end
     newhash
   end
-
-  def symbolizehash!(hash)
-    Puppet.deprecation_warning "symbolizehash! is deprecated. Use the non-destructive symbolizehash method instead."
-    # this is not the most memory-friendly way to accomplish this, but the
-    #  code re-use and clarity seems worthwhile.
-    newhash = symbolizehash(hash)
-    hash.clear
-    hash.merge!(newhash)
-
-    hash
-  end
-  module_function :symbolize, :symbolizehash, :symbolizehash!
+  module_function :symbolizehash
 
   # Just benchmark, with no logging.
   def thinmark
@@ -519,6 +361,23 @@ module Util
     File.open(file, 'rb') { |f| f.read }
   end
   module_function :binread
+
+  # utility method to get the current call stack and format it to a human-readable string (which some IDEs/editors
+  # will recognize as links to the line numbers in the trace)
+  def self.pretty_backtrace(backtrace = caller(1))
+    backtrace.collect do |line|
+      _, path, rest = /^(.*):(\d+.*)$/.match(line).to_a
+      # If the path doesn't exist - like in one test, and like could happen in
+      # the world - we should just tolerate it and carry on. --daniel 2012-09-05
+      # Also, if we don't match, just include the whole line.
+      if path
+        path = Pathname(path).realpath rescue path
+        "#{path}:#{rest}"
+      else
+        line
+      end
+    end.join("\n")
+  end
 
   # Replace a file, securely.  This takes a block, and passes it the file
   # handle of a file open for writing.  Write the replacement content inside
@@ -622,7 +481,7 @@ module Util
         retry
       end
     else
-      File.rename(tempfile.path, file)
+      File.rename(tempfile.path, file.to_s)
     end
 
     # Ideally, we would now fsync the directory as well, but Ruby doesn't
@@ -632,8 +491,73 @@ module Util
     file
   end
   module_function :replace_file
+
+
+  # Executes a block of code, wrapped with some special exception handling.  Causes the ruby interpreter to
+  #  exit if the block throws an exception.
+  #
+  # @api public
+  # @param [String] message a message to log if the block fails
+  # @param [Integer] code the exit code that the ruby interpreter should return if the block fails
+  # @yield
+  def exit_on_fail(message, code = 1)
+    yield
+  # First, we need to check and see if we are catching a SystemExit error.  These will be raised
+  #  when we daemonize/fork, and they do not necessarily indicate a failure case.
+  rescue SystemExit => err
+    raise err
+
+  # Now we need to catch *any* other kind of exception, because we may be calling third-party
+  #  code (e.g. webrick), and we have no idea what they might throw.
+  rescue Exception => err
+    ## NOTE: when debugging spec failures, these two lines can be very useful
+    #puts err.inspect
+    #puts Puppet::Util.pretty_backtrace(err.backtrace)
+    Puppet.log_exception(err, "Could not #{message}: #{err}")
+    Puppet::Util::Log.force_flushqueue()
+    exit(code)
+  end
+  module_function :exit_on_fail
+
+  def deterministic_rand(seed,max)
+    if defined?(Random) == 'constant' && Random.class == Class
+      Random.new(seed).rand(max).to_s
+    else
+      srand(seed)
+      result = rand(max).to_s
+      srand()
+      result
+    end
+  end
+  module_function :deterministic_rand
+
+
+  #######################################################################################################
+  # Deprecated methods relating to process execution; these have been moved to Puppet::Util::Execution
+  #######################################################################################################
+
+  def execpipe(command, failonfail = true, &block)
+    Puppet.deprecation_warning("Puppet::Util.execpipe is deprecated; please use Puppet::Util::Execution.execpipe")
+    Puppet::Util::Execution.execpipe(command, failonfail, &block)
+  end
+  module_function :execpipe
+
+  def execfail(command, exception)
+    Puppet.deprecation_warning("Puppet::Util.execfail is deprecated; please use Puppet::Util::Execution.execfail")
+    Puppet::Util::Execution.execfail(command, exception)
+  end
+  module_function :execfail
+
+  def execute(*args)
+    Puppet.deprecation_warning("Puppet::Util.execute is deprecated; please use Puppet::Util::Execution.execute")
+
+    Puppet::Util::Execution.execute(*args)
+  end
+  module_function :execute
+
 end
 end
+
 
 require 'puppet/util/errors'
 require 'puppet/util/methodhelper'

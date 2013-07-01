@@ -1,6 +1,10 @@
 # I pulled this into a separate file, because I got
 # tired of rebuilding the parser.rb file all the time.
+require 'forwardable'
+
 class Puppet::Parser::Parser
+  extend Forwardable
+
   require 'puppet/parser/functions'
   require 'puppet/parser/files'
   require 'puppet/resource/type_collection'
@@ -32,6 +36,11 @@ class Puppet::Parser::Parser
   # Create an AST array containing a single element
   def aryfy(arg)
     ast AST::ASTArray, :children => [arg]
+  end
+
+  # Create an AST block containing a single element
+  def block(arg)
+    ast AST::BlockExpression, :children => [arg]
   end
 
   # Create an AST object, and automatically add the file and line information if
@@ -70,9 +79,7 @@ class Puppet::Parser::Parser
     raise except
   end
 
-  def file
-    @lexer.file
-  end
+  def_delegators :@lexer, :file, :string=
 
   def file=(file)
     unless FileTest.exist?(file)
@@ -86,19 +93,9 @@ class Puppet::Parser::Parser
     @lexer.file = file
   end
 
-  [:hostclass, :definition, :node, :nodes?].each do |method|
-    define_method(method) do |*args|
-      known_resource_types.send(method, *args)
-    end
-  end
-
-  def find_hostclass(namespace, name)
-    known_resource_types.find_hostclass(namespace, name)
-  end
-
-  def find_definition(namespace, name)
-    known_resource_types.find_definition(namespace, name)
-  end
+  def_delegators :known_resource_types, :hostclass, :definition, :node, :nodes?
+  def_delegators :known_resource_types, :find_hostclass, :find_definition
+  def_delegators :known_resource_types, :watch_file, :version
 
   def import(file)
     known_resource_types.loader.import(file, @lexer.file)
@@ -151,31 +148,13 @@ class Puppet::Parser::Parser
       begin
         @yydebug = false
         main = yyparse(@lexer,:scan)
-      rescue Racc::ParseError => except
-        error = Puppet::ParseError.new(except)
-        error.line = @lexer.line
-        error.file = @lexer.file
-        error.set_backtrace except.backtrace
-        raise error
       rescue Puppet::ParseError => except
         except.line ||= @lexer.line
         except.file ||= @lexer.file
-        raise except
-      rescue Puppet::Error => except
-        # and this is a framework error
-        except.line ||= @lexer.line
-        except.file ||= @lexer.file
-        raise except
-      rescue Puppet::DevError => except
-        except.line ||= @lexer.line
-        except.file ||= @lexer.file
+        except.pos ||= @lexer.pos
         raise except
       rescue => except
-        error = Puppet::DevError.new(except.message)
-        error.line = @lexer.line
-        error.file = @lexer.file
-        error.set_backtrace except.backtrace
-        raise error
+        raise Puppet::ParseError.new(except.message, @lexer.file, @lexer.line, nil, except)
       end
     end
     # Store the results as the top-level class.
@@ -185,27 +164,14 @@ class Puppet::Parser::Parser
   end
 
   def parse_ruby_file
+    Puppet.deprecation_warning("Use of the Ruby DSL is deprecated.")
+
     # Execute the contents of the file inside its own "main" object so
     # that it can call methods in the resource type API.
     main_object = Puppet::DSL::ResourceTypeAPI.new
     main_object.instance_eval(File.read(self.file))
 
     # Then extract any types that were created.
-    Puppet::Parser::AST::ASTArray.new :children => main_object.instance_eval { @__created_ast_objects__ }
-  end
-
-  def string=(string)
-    @lexer.string = string
-  end
-
-  def version
-    known_resource_types.version
-  end
-
-  # Add a new file to be checked when we're checking to see if we should be
-  # reparsed.  This is basically only used by the TemplateWrapper to let the
-  # parser know about templates that should be parsed.
-  def watch_file(filename)
-    known_resource_types.watch_file(filename)
+    Puppet::Parser::AST::BlockExpression.new :children => main_object.instance_eval { @__created_ast_objects__ }
   end
 end

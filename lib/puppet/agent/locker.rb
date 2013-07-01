@@ -1,20 +1,17 @@
 require 'puppet/util/pidlock'
 
-# Break out the code related to locking the agent.  This module is just
-# included into the agent, but having it here makes it easier to test.
+# This module is responsible for encapsulating the logic for "locking" the
+# puppet agent during a catalog run; in other words, keeping track of enough
+# state to answer the question "is there a puppet agent currently applying a
+# catalog?"
+#
+# The implementation involves writing a lockfile whose contents are simply the
+# PID of the running agent process.  This is considered part of the public
+# Puppet API because it used by external tools such as mcollective.
+#
+# For more information, please see docs on the website.
+#  http://links.puppetlabs.com/agent_lockfiles
 module Puppet::Agent::Locker
-  # Let the daemon run again, freely in the filesystem.
-  def enable
-    Puppet.notice "Enabling Puppet."
-    lockfile.unlock(:anonymous => true)
-  end
-
-  # Stop the daemon from making any catalog runs.
-  def disable
-    Puppet.notice "Disabling Puppet."
-    lockfile.lock(:anonymous => true)
-  end
-
   # Yield if we get a lock, else do nothing.  Return
   # true/false depending on whether we get the lock.
   def lock
@@ -24,10 +21,15 @@ module Puppet::Agent::Locker
       ensure
         lockfile.unlock
       end
-      return true
-    else
-      return false
     end
+  end
+
+  def running?
+    lockfile.locked?
+  end
+
+  def lockfile_path
+    @lockfile_path ||= Puppet[:agent_catalog_run_lockfile]
   end
 
   def lockfile
@@ -35,12 +37,7 @@ module Puppet::Agent::Locker
 
     @lockfile
   end
+  private :lockfile
 
-  def running?
-    lockfile.locked? and !lockfile.anonymous?
-  end
 
-  def disabled?
-    lockfile.locked? and lockfile.anonymous?
-  end
 end

@@ -14,7 +14,7 @@ class Puppet::Parser::AST
   include Puppet::Util::MethodHelper
   include Puppet::Util::Docs
 
-  attr_accessor :parent, :scope, :file, :line
+  attr_accessor :parent, :scope, :file, :line, :pos
 
   def inspect
     "( #{self.class} #{self.to_s} #{@children.inspect} )"
@@ -29,23 +29,12 @@ class Puppet::Parser::AST
   class << self
     attr_accessor :use_docs
     def associates_doc
-    self.use_docs = true
-    end
-  end
-
-  # Does this ast object set something?  If so, it gets evaluated first.
-  def self.settor?
-    if defined?(@settor)
-      @settor
-    else
-      false
+      self.use_docs = true
     end
   end
 
   # Evaluate the current object.  Just a stub method, since the subclass
   # should override this method.
-  # of the contained children and evaluates them in turn, returning a
-  # list of all of the collected values, rejecting nil values
   def evaluate(*options)
     raise Puppet::DevError, "Did not override #evaluate in #{self.class}"
   end
@@ -74,7 +63,7 @@ class Puppet::Parser::AST
     rescue Puppet::Error => detail
       raise adderrorcontext(detail)
     rescue => detail
-      error = Puppet::Error.new(detail.to_s)
+      error = Puppet::ParseError.new(detail.to_s, nil, nil, detail)
       # We can't use self.fail here because it always expects strings,
       # not exceptions.
       raise adderrorcontext(error, detail)
@@ -121,8 +110,10 @@ require 'puppet/parser/ast/function'
 require 'puppet/parser/ast/hostclass'
 require 'puppet/parser/ast/ifstatement'
 require 'puppet/parser/ast/in_operator'
+require 'puppet/parser/ast/lambda'
 require 'puppet/parser/ast/leaf'
 require 'puppet/parser/ast/match_operator'
+require 'puppet/parser/ast/method_call'
 require 'puppet/parser/ast/minus'
 require 'puppet/parser/ast/node'
 require 'puppet/parser/ast/nop'

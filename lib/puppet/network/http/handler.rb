@@ -1,16 +1,27 @@
 module Puppet::Network::HTTP
 end
 
+require 'puppet/network/http'
 require 'puppet/network/http/api/v1'
-require 'puppet/network/rest_authorization'
+require 'puppet/network/authorization'
+require 'puppet/network/authentication'
 require 'puppet/network/rights'
+require 'puppet/util/profiler'
 require 'resolv'
 
 module Puppet::Network::HTTP::Handler
   include Puppet::Network::HTTP::API::V1
-  include Puppet::Network::RestAuthorization
+  include Puppet::Network::Authorization
+  include Puppet::Network::Authentication
 
   attr_reader :server, :handler
+
+
+  # Retrieve all headers from the http request, as a hash with the header names
+  # (lower-cased) as the keys
+  def headers(request)
+    raise NotImplementedError
+  end
 
   # Retrieve the accept header from the http request.
   def accept_header(request)
@@ -61,15 +72,27 @@ module Puppet::Network::HTTP::Handler
 
   # handle an HTTP request
   def process(request, response)
-    indirection, method, key, params = uri2indirection(http_method(request), path(request), params(request))
+    request_headers = headers(request)
+    request_params = params(request)
+    request_method = http_method(request)
+    request_path = path(request)
 
-    check_authorization(indirection, method, key, params)
+    configure_profiler(request_headers, request_params)
 
-    send("do_#{method}", indirection, key, params, request, response)
+    Puppet::Util::Profiler.profile("Processed request #{request_method} #{request_path}") do
+      indirection, method, key, params = uri2indirection(request_method, request_path, request_params)
+
+      check_authorization(indirection, method, key, params)
+      warn_if_near_expiration(client_cert(request))
+
+      send("do_#{method}", indirection, key, params, request, response)
+    end
   rescue SystemExit,NoMemoryError
     raise
   rescue Exception => e
     return do_exception(response, e)
+  ensure
+    cleanup(request)
   end
 
   # Set the response up, with the body and status.
@@ -89,11 +112,7 @@ module Puppet::Network::HTTP::Handler
       status = 403 if status == 400
     end
     if exception.is_a?(Exception)
-      if Puppet[:trace] then
-        puts exception.backtrace
-        Puppet.err(exception.backtrace.join("\n"))
-      end
-      Puppet.err(exception)
+      Puppet.log_exception(exception)
     end
     set_content_type(response, "text/plain")
     set_response(response, exception.to_s, status)
@@ -117,10 +136,15 @@ module Puppet::Network::HTTP::Handler
     format = format_to_use(request)
     set_content_type(response, format)
 
+    rendered_result = result
     if result.respond_to?(:render)
-      set_response(response, result.render(format))
-    else
-      set_response(response, result)
+      Puppet::Util::Profiler.profile("Rendered result in #{format}") do
+       rendered_result = result.render(format)
+      end
+    end
+
+    Puppet::Util::Profiler.profile("Sent response") do
+      set_response(response, rendered_result)
     end
   end
 
@@ -220,6 +244,14 @@ module Puppet::Network::HTTP::Handler
     raise NotImplementedError
   end
 
+  def client_cert(request)
+    raise NotImplementedError
+  end
+
+  def cleanup(request)
+    # By default, there is nothing to cleanup.
+  end
+
   def decode_params(params)
     params.inject({}) do |result, ary|
       param, value = ary
@@ -233,7 +265,7 @@ module Puppet::Network::HTTP::Handler
       next result if param == :ip
       value = CGI.unescape(value)
       if value =~ /^---/
-        value = YAML.load(value)
+        value = YAML.load(value, :safe => true, :deserialize_symbols => true)
       else
         value = true if value == "true"
         value = false if value == "false"
@@ -242,6 +274,14 @@ module Puppet::Network::HTTP::Handler
       end
       result[param] = value
       result
+    end
+  end
+
+  def configure_profiler(request_headers, request_params)
+    if (request_headers.has_key?(Puppet::Network::HTTP::HEADER_ENABLE_PROFILING.downcase) or Puppet[:profile])
+      Puppet::Util::Profiler.current = Puppet::Util::Profiler::WallClock.new(Puppet.method(:debug), request_params.object_id)
+    else
+      Puppet::Util::Profiler.current = Puppet::Util::Profiler::NONE
     end
   end
 end

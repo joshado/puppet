@@ -1,4 +1,4 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 
 require 'spec_helper'
 
@@ -47,6 +47,15 @@ describe Puppet::Type.type(:cron), :unless => Puppet.features.microsoft_windows?
 
       it "should not support other values" do
         expect { described_class.new(:name => 'foo', :ensure => :foo) }.to raise_error(Puppet::Error, /Invalid value/)
+      end
+    end
+
+    describe "command" do
+      it "should discard leading spaces" do
+        described_class.new(:name => 'foo', :command => " /bin/true")[:command].should_not match Regexp.new(" ")
+      end
+      it "should discard trailing spaces" do
+        described_class.new(:name => 'foo', :command => "/bin/true ")[:command].should_not match Regexp.new(" ")
       end
     end
 

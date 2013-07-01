@@ -1,4 +1,4 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 
 require 'puppet/transaction/report'
@@ -127,6 +127,14 @@ describe Puppet::Transaction::Report do
       report = Puppet::Transaction::Report.new("apply")
       report.add_metric("changes", {"total" => 0})
       report.add_metric("resources", {"failed" => 1})
+      report.exit_status.should == 4
+    end
+
+    it "should produce 4 if failures to restart are present" do
+      report = Puppet::Transaction::Report.new("apply")
+      report.add_metric("changes", {"total" => 0})
+      report.add_metric("resources", {"failed" => 0})
+      report.add_metric("resources", {"failed_to_restart" => 1})
       report.exit_status.should == 4
     end
 

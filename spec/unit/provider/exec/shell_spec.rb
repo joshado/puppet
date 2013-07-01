@@ -1,4 +1,4 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 
 describe Puppet::Type.type(:exec).provider(:shell), :unless => Puppet.features.microsoft_windows? do

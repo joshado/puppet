@@ -1,20 +1,27 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 
 describe "Puppet::Resource::Catalog::ActiveRecord", :if => can_use_scratch_database? do
   include PuppetSpec::Files
-
-  require 'puppet/rails'
 
   before :each do
     require 'puppet/indirector/catalog/active_record'
     setup_scratch_database
   end
 
+  after :each do
+    Puppet::Rails.teardown
+  end
+
   let :terminus do
     Puppet::Resource::Catalog::ActiveRecord.new
   end
 
+  it "should issue a deprecation warning" do
+    Puppet.expects(:deprecation_warning).with() { |msg| msg =~ /ActiveRecord-based storeconfigs and inventory are deprecated/ }
+
+    Puppet::Resource::Catalog::ActiveRecord.new
+  end
 
   it "should be a subclass of the ActiveRecord terminus class" do
     Puppet::Resource::Catalog::ActiveRecord.ancestors.should be_include(Puppet::Indirector::ActiveRecord)
@@ -25,61 +32,23 @@ describe "Puppet::Resource::Catalog::ActiveRecord", :if => can_use_scratch_datab
   end
 
   describe "when finding an instance" do
-    let :request do
-      stub 'request', :key => "foo", :options => {:cache_integration_hack => true}
+    it "should return nil" do
+      r = stub 'request', :key => "foo", :options => {:cache_integration_hack => false}
+      terminus.find(r).should be_nil
     end
 
-    # This hack is here because we don't want to look in the db unless we actually want
-    # to look in the db, but our indirection architecture in 0.24.x isn't flexible
-    # enough to tune that via configuration.
-    it "should return nil unless ':cache_integration_hack' is set to true" do
-      request.options[:cache_integration_hack] = false
-      Puppet::Rails::Host.expects(:find_by_name).never
-      terminus.find(request).should be_nil
-    end
-
-    it "should use the Hosts ActiveRecord class to find the host" do
-      Puppet::Rails::Host.expects(:find_by_name).with { |key, args| key == "foo" }
-      terminus.find(request)
-    end
-
-    it "should return nil if no host instance can be found" do
-      Puppet::Rails::Host.expects(:find_by_name).returns nil
-
-      terminus.find(request).should be_nil
-    end
-
-    it "should return a catalog with the same name as the host if the host can be found" do
-      host = stub 'host', :name => "foo", :resources => []
-      Puppet::Rails::Host.expects(:find_by_name).returns host
-
-      result = terminus.find(request)
-      result.should be_instance_of(Puppet::Resource::Catalog)
-      result.name.should == "foo"
-    end
-
-    it "should set each of the host's resources as a transportable resource within the catalog" do
-      host = stub 'host', :name => "foo"
-      Puppet::Rails::Host.expects(:find_by_name).returns host
-
-      res1 = mock 'res1', :to_transportable => "trans_res1"
-      res2 = mock 'res2', :to_transportable => "trans_res2"
-
-      host.expects(:resources).returns [res1, res2]
-
-      catalog = stub 'catalog'
-      Puppet::Resource::Catalog.expects(:new).returns catalog
-
-      catalog.expects(:add_resource).with "trans_res1"
-      catalog.expects(:add_resource).with "trans_res2"
-
-      terminus.find(request)
+    # This used to make things go to the database, but that is code that is as
+    # dead as a doornail.  This just checks we don't blow up unexpectedly, and
+    # can go away after a few releases. --daniel 2012-02-27
+    it "should always return nil" do
+      r = stub 'request', :key => "foo", :options => {:cache_integration_hack => true}
+      terminus.find(r).should be_nil
     end
   end
 
   describe "when saving an instance" do
     let :catalog do Puppet::Resource::Catalog.new("foo") end
-    let :request do Puppet::Indirector::Request.new(:active_record, :save, catalog) end
+    let :request do Puppet::Indirector::Request.new(:active_record, :save, nil, catalog) end
     let :node do Puppet::Node.new("foo", :environment => "environment") end
 
     before :each do

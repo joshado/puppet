@@ -1,7 +1,8 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 
 require 'puppet/util/network_device/cisco/device'
+require 'puppet/util/network_device/transport/telnet'
 
 describe Puppet::Util::NetworkDevice::Cisco::Device do
   before(:each) do
@@ -16,9 +17,45 @@ describe Puppet::Util::NetworkDevice::Cisco::Device do
       cisco.enable_password.should == "enable_password"
     end
 
+    describe "decoding the enable password" do
+      it "should not parse a password if no query is given" do
+        cisco = described_class.new("telnet://user:password@localhost:23")
+        cisco.enable_password.should be_nil
+      end
+
+      it "should not parse a password if no enable param is given" do
+        cisco = described_class.new("telnet://user:password@localhost:23/?notenable=notapassword")
+        cisco.enable_password.should be_nil
+      end
+      it "should decode sharps" do
+        cisco = described_class.new("telnet://user:password@localhost:23/?enable=enable_password%23with_a_sharp")
+        cisco.enable_password.should == "enable_password#with_a_sharp"
+      end
+
+      it "should decode spaces" do
+        cisco = described_class.new("telnet://user:password@localhost:23/?enable=enable_password%20with_a_space")
+        cisco.enable_password.should == "enable_password with_a_space"
+      end
+
+      it "should only use the query parameter" do
+        cisco = described_class.new("telnet://enable=:password@localhost:23/?enable=enable_password&notenable=notapassword")
+        cisco.enable_password.should == "enable_password"
+      end
+    end
+
     it "should find the enable password from the options" do
       cisco = Puppet::Util::NetworkDevice::Cisco::Device.new("telnet://user:password@localhost:23/?enable=enable_password", :enable_password => "mypass")
       cisco.enable_password.should == "mypass"
+    end
+
+    it "should find the debug mode from the options" do
+      Puppet::Util::NetworkDevice::Transport::Telnet.expects(:new).with(true).returns(@transport)
+      cisco = Puppet::Util::NetworkDevice::Cisco::Device.new("telnet://user:password@localhost:23", :debug => true)
+    end
+
+    it "should set the debug mode to nil by default" do
+      Puppet::Util::NetworkDevice::Transport::Telnet.expects(:new).with(nil).returns(@transport)
+      cisco = Puppet::Util::NetworkDevice::Cisco::Device.new("telnet://user:password@localhost:23")
     end
   end
 
@@ -145,7 +182,7 @@ eos
     "ATM 0/1.1" => "ATM0/1.1",
     "VLAN99" => "VLAN99"
   }.each do |input,expected|
-    it "should canonicalize #{input} to #{expected}", :'fails_on_ruby_1.9.2' => true do
+    it "should canonicalize #{input} to #{expected}" do
       @cisco.canonalize_ifname(input).should == expected
     end
   end
@@ -232,7 +269,7 @@ eos
       @cisco.parse_interface("FastEthernet0/1").should == { :ensure => :absent, :duplex => :auto, :speed => :auto }
     end
 
-    it "should be able to parse the sh vlan brief command output", :'fails_on_ruby_1.9.2' => true do
+    it "should be able to parse the sh vlan brief command output" do
       @cisco.stubs(:support_vlan_brief?).returns(true)
       @transport.stubs(:command).with("sh vlan brief").returns(<<eos)
 Switch#sh vlan brief

@@ -3,7 +3,7 @@ require 'puppet/module_tool'
 require 'tmpdir'
 require 'puppet_spec/modules'
 
-describe Puppet::ModuleTool::Applications::Uninstaller, :fails_on_windows => true do
+describe Puppet::ModuleTool::Applications::Uninstaller do
   include PuppetSpec::Files
 
   def mkmod(name, path, metadata=nil)

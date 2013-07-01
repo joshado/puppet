@@ -1,4 +1,4 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 #
 # Unit testing for the SMF service Provider
 #
@@ -20,6 +20,21 @@ describe provider_class, :as_platform => :posix do
     FileTest.stubs(:executable?).with('/usr/sbin/svcadm').returns true
     FileTest.stubs(:file?).with('/usr/bin/svcs').returns true
     FileTest.stubs(:executable?).with('/usr/bin/svcs').returns true
+  end
+
+  describe ".instances" do
+    it "should have an instances method" do
+      provider_class.should respond_to :instances
+    end
+
+    it "should get a list of services (excluding legacy)" do
+      provider_class.expects(:svcs).with().returns File.read(my_fixture('svcs.out'))
+      instances = provider_class.instances.map { |p| {:name => p.get(:name), :ensure => p.get(:ensure)} }
+      # we dont manage legacy
+      instances.size.should == 2
+      instances[0].should == {:name => 'svc:/system/svc/restarter:default', :ensure => :running }
+      instances[1].should == {:name => 'svc:/network/cswrsyncd:default', :ensure => :maintenance }
+    end
   end
 
   it "should have a restart method" do

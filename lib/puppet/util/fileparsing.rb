@@ -141,6 +141,11 @@ module Puppet::Util::FileParsing
   end
 
   # Try to match a record.
+  #
+  # @param [String] line The line to be parsed
+  # @param [Puppet::Util::FileType] record The filetype to use for parsing
+  #
+  # @return [Hash<Symbol, Object>] The parsed elements of the line
   def handle_record_line(line, record)
     ret = nil
     if record.respond_to?(:process)
@@ -223,7 +228,7 @@ module Puppet::Util::FileParsing
       if val = parse_line(line)
         val
       else
-        error = Puppet::Error.new("Could not parse line #{line.inspect}")
+        error = Puppet::ResourceError.new("Could not parse line #{line.inspect}")
         error.line = count
         raise error
       end

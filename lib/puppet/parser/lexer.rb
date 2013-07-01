@@ -1,7 +1,9 @@
 # the scanner/lexer
 
+require 'forwardable'
 require 'strscan'
 require 'puppet'
+require 'puppet/util/methodhelper'
 
 
 module Puppet
@@ -11,69 +13,81 @@ end
 module Puppet::Parser; end
 
 class Puppet::Parser::Lexer
+  extend Forwardable
+
   attr_reader :last, :file, :lexing_context, :token_queue
 
   attr_accessor :line, :indefine
+  alias :indefine? :indefine
 
+  # Returns the position on the line.
+  # This implementation always returns nil. It is here for API reasons in Puppet::Error
+  # which needs to support both --parser current, and --parser future.
+  #
+  def pos
+    # Make the lexer comply with newer API. It does not produce a pos...
+    nil
+  end
+  
   def lex_error msg
     raise Puppet::LexError.new(msg)
   end
 
   class Token
+    ALWAYS_ACCEPTABLE = Proc.new { |context| true }
+
+    include Puppet::Util::MethodHelper
+
     attr_accessor :regex, :name, :string, :skip, :incr_line, :skip_text, :accumulate
+    alias skip? skip
+    alias accumulate? accumulate
 
-    def initialize(regex, name)
-      if regex.is_a?(String)
-        @name, @string = name, regex
-        @regex = Regexp.new(Regexp.escape(@string))
+    def initialize(string_or_regex, name, options = {})
+      if string_or_regex.is_a?(String)
+        @name, @string = name, string_or_regex
+        @regex = Regexp.new(Regexp.escape(string_or_regex))
       else
-        @name, @regex = name, regex
+        @name, @regex = name, string_or_regex
       end
-    end
 
-    # MQR: Why not just alias?
-    %w{skip accumulate}.each do |method|
-      define_method(method+"?") do
-        self.send(method)
-      end
+      set_options(options)
+      @acceptable_when = ALWAYS_ACCEPTABLE
     end
 
     def to_s
-      if self.string
-        @string
-      else
-        @name.to_s
-      end
+      string or @name.to_s
     end
 
     def acceptable?(context={})
-      # By default tokens are aceeptable in any context
-      true
+      @acceptable_when.call(context)
+    end
+
+    # Define when the token is able to match.
+    # This provides context that cannot be expressed otherwise, such as feature flags.
+    #
+    # @param block [Proc] a proc that given a context returns a boolean
+    def acceptable_when(block)
+      @acceptable_when = block
     end
   end
 
   # Maintain a list of tokens.
   class TokenList
-    attr_reader :regex_tokens, :string_tokens
+    extend Forwardable
 
-    def [](name)
-      @tokens[name]
-    end
+    attr_reader :regex_tokens, :string_tokens
+    def_delegator :@tokens, :[]
 
     # Create a new token.
     def add_token(name, regex, options = {}, &block)
-      token = Token.new(regex, name)
       raise(ArgumentError, "Token #{name} already exists") if @tokens.include?(name)
+      token = Token.new(regex, name, options)
       @tokens[token.name] = token
       if token.string
         @string_tokens << token
         @tokens_by_string[token.string] = token
       else
         @regex_tokens << token
-      end
-
-      options.each do |name, option|
-        token.send(name.to_s + "=", option)
       end
 
       token.meta_def(:convert, &block) if block_given?
@@ -113,67 +127,90 @@ class Puppet::Parser::Lexer
   end
 
   TOKENS = TokenList.new
+  TOKENS.add_tokens(
+    '['   => :LBRACK,
+    ']'   => :RBRACK,
+    '{'   => :LBRACE,
+    '}'   => :RBRACE,
+    '('   => :LPAREN,
+    ')'   => :RPAREN,
+    '='   => :EQUALS,
+    '+='  => :APPENDS,
+    '=='  => :ISEQUAL,
+    '>='  => :GREATEREQUAL,
+    '>'   => :GREATERTHAN,
+    '<'   => :LESSTHAN,
+    '<='  => :LESSEQUAL,
+    '!='  => :NOTEQUAL,
+    '!'   => :NOT,
+    ','   => :COMMA,
+    '.'   => :DOT,
+    ':'   => :COLON,
+    '@'   => :AT,
+    '<<|' => :LLCOLLECT,
+    '|>>' => :RRCOLLECT,
+    '->'  => :IN_EDGE,
+    '<-'  => :OUT_EDGE,
+    '~>'  => :IN_EDGE_SUB,
+    '<~'  => :OUT_EDGE_SUB,
+    '<|'  => :LCOLLECT,
+    '|>'  => :RCOLLECT,
+    ';'   => :SEMIC,
+    '?'   => :QMARK,
+    '\\'  => :BACKSLASH,
+    '=>'  => :FARROW,
+    '+>'  => :PARROW,
+    '+'   => :PLUS,
+    '-'   => :MINUS,
+    '/'   => :DIV,
+    '*'   => :TIMES,
+    '%'   => :MODULO,
+    '<<'  => :LSHIFT,
+    '>>'  => :RSHIFT,
+    '=~'  => :MATCH,
+    '!~'  => :NOMATCH,
+    %r{((::){0,1}[A-Z][-\w]*)+} => :CLASSREF,
+    "<string>" => :STRING,
+    "<dqstring up to first interpolation>" => :DQPRE,
+    "<dqstring between two interpolations>" => :DQMID,
+    "<dqstring after final interpolation>" => :DQPOST,
+    "<boolean>" => :BOOLEAN
+  )
 
-    TOKENS.add_tokens(
+  module Contextual
+    QUOTE_TOKENS = [:DQPRE,:DQMID]
+    REGEX_INTRODUCING_TOKENS = [:NODE,:LBRACE,:RBRACE,:MATCH,:NOMATCH,:COMMA]
 
-      '[' => :LBRACK,
-      ']' => :RBRACK,
-      '{' => :LBRACE,
-      '}' => :RBRACE,
-      '(' => :LPAREN,
+    NOT_INSIDE_QUOTES = Proc.new do |context|
+      !QUOTE_TOKENS.include? context[:after]
+    end
 
-      ')' => :RPAREN,
-      '=' => :EQUALS,
-      '+=' => :APPENDS,
-      '==' => :ISEQUAL,
-      '>=' => :GREATEREQUAL,
-      '>' => :GREATERTHAN,
-      '<' => :LESSTHAN,
-      '<=' => :LESSEQUAL,
-      '!=' => :NOTEQUAL,
-      '!' => :NOT,
-      ',' => :COMMA,
-      '.' => :DOT,
-      ':' => :COLON,
-      '@' => :AT,
-      '<<|' => :LLCOLLECT,
-      '->' => :IN_EDGE,
-      '<-' => :OUT_EDGE,
-      '~>' => :IN_EDGE_SUB,
-      '<~' => :OUT_EDGE_SUB,
-      '|>>' => :RRCOLLECT,
-      '<|' => :LCOLLECT,
-      '|>' => :RCOLLECT,
-      ';' => :SEMIC,
-      '?' => :QMARK,
-      '\\' => :BACKSLASH,
-      '=>' => :FARROW,
-      '+>' => :PARROW,
-      '+' => :PLUS,
-      '-' => :MINUS,
-      '/' => :DIV,
-      '*' => :TIMES,
-      '<<' => :LSHIFT,
-      '>>' => :RSHIFT,
-      '=~' => :MATCH,
-      '!~' => :NOMATCH,
-      %r{((::){0,1}[A-Z][-\w]*)+} => :CLASSREF,
-      "<string>" => :STRING,
-      "<dqstring up to first interpolation>" => :DQPRE,
-      "<dqstring between two interpolations>" => :DQMID,
-      "<dqstring after final interpolation>" => :DQPOST,
-      "<boolean>" => :BOOLEAN
-      )
+    INSIDE_QUOTES = Proc.new do |context|
+      QUOTE_TOKENS.include? context[:after]
+    end
+
+    IN_REGEX_POSITION = Proc.new do |context|
+      REGEX_INTRODUCING_TOKENS.include? context[:after]
+    end
+
+    IN_STRING_INTERPOLATION = Proc.new do |context|
+      context[:string_interpolation_depth] > 0
+    end
+
+    DASHED_VARIABLES_ALLOWED = Proc.new do |context|
+      Puppet[:allow_variables_with_dashes]
+    end
+
+    VARIABLE_AND_DASHES_ALLOWED = Proc.new do |context|
+      Contextual::DASHED_VARIABLES_ALLOWED.call(context) and TOKENS[:VARIABLE].acceptable?(context)
+    end
+  end
 
   # Numbers are treated separately from names, so that they may contain dots.
   TOKENS.add_token :NUMBER, %r{\b(?:0[xX][0-9A-Fa-f]+|0?\d+(?:\.\d+)?(?:[eE]-?\d+)?)\b} do |lexer, value|
     [TOKENS[:NAME], value]
   end
-  #:stopdoc: # Issue #4161
-  def (TOKENS[:NUMBER]).acceptable?(context={})
-    ![:DQPRE,:DQMID].include? context[:after]
-  end
-  #:startdoc:
+  TOKENS[:NUMBER].acceptable_when Contextual::NOT_INSIDE_QUOTES
 
   TOKENS.add_token :NAME, %r{((::)?[a-z0-9][-\w]*)(::[a-z0-9][-\w]*)*} do |lexer, value|
     string_token = self
@@ -187,13 +224,9 @@ class Puppet::Parser::Lexer
     end
     [string_token, value]
   end
-  [:NAME,:CLASSNAME,:CLASSREF].each { |name_token|
-    #:stopdoc: # Issue #4161
-    def (TOKENS[name_token]).acceptable?(context={})
-      ![:DQPRE,:DQMID].include? context[:after]
-    end
-    #:startdoc:
-  }
+  [:NAME, :CLASSREF].each do |name_token|
+    TOKENS[name_token].acceptable_when Contextual::NOT_INSIDE_QUOTES
+  end
 
   TOKENS.add_token :COMMENT, %r{#.*}, :accumulate => true, :skip => true do |lexer,value|
     value.sub!(/# ?/,'')
@@ -216,12 +249,7 @@ class Puppet::Parser::Lexer
     regex = value.sub(%r{\A/}, "").sub(%r{/\Z}, '').gsub("\\/", "/")
     [self, Regexp.new(regex)]
   end
-
-  #:stopdoc: # Issue #4161
-  def (TOKENS[:REGEX]).acceptable?(context={})
-    [:NODE,:LBRACE,:RBRACE,:MATCH,:NOMATCH,:COMMA].include? context[:after]
-  end
-  #:startdoc:
+  TOKENS[:REGEX].acceptable_when Contextual::IN_REGEX_POSITION
 
   TOKENS.add_token :RETURN, "\n", :skip => true, :incr_line => true, :skip_text => true
 
@@ -239,20 +267,14 @@ class Puppet::Parser::Lexer
   TOKENS.add_token :DQCONT, /\}/ do |lexer, value|
     lexer.tokenize_interpolated_string(DQ_continuation_token_types)
   end
-  #:stopdoc: # Issue #4161
-  def (TOKENS[:DQCONT]).acceptable?(context={})
-    context[:string_interpolation_depth] > 0
-  end
-  #:startdoc:
+  TOKENS[:DQCONT].acceptable_when Contextual::IN_STRING_INTERPOLATION
 
   TOKENS.add_token :DOLLAR_VAR_WITH_DASH, %r{\$(?:::)?(?:[-\w]+::)*[-\w]+} do |lexer, value|
     lexer.warn_if_variable_has_hyphen(value)
 
     [TOKENS[:VARIABLE], value[1..-1]]
   end
-  def (TOKENS[:DOLLAR_VAR_WITH_DASH]).acceptable?(context = {})
-    Puppet[:allow_variables_with_dashes]
-  end
+  TOKENS[:DOLLAR_VAR_WITH_DASH].acceptable_when Contextual::DASHED_VARIABLES_ALLOWED
 
   TOKENS.add_token :DOLLAR_VAR, %r{\$(::)?(\w+::)*\w+} do |lexer, value|
     [TOKENS[:VARIABLE],value[1..-1]]
@@ -263,52 +285,40 @@ class Puppet::Parser::Lexer
 
     [TOKENS[:VARIABLE], value]
   end
-  #:stopdoc: # Issue #4161
-  def (TOKENS[:VARIABLE_WITH_DASH]).acceptable?(context={})
-    Puppet[:allow_variables_with_dashes] and TOKENS[:VARIABLE].acceptable?(context)
-  end
-  #:startdoc:
+  TOKENS[:VARIABLE_WITH_DASH].acceptable_when Contextual::VARIABLE_AND_DASHES_ALLOWED
 
   TOKENS.add_token :VARIABLE, %r{(::)?(\w+::)*\w+}
-  #:stopdoc: # Issue #4161
-  def (TOKENS[:VARIABLE]).acceptable?(context={})
-    [:DQPRE,:DQMID].include? context[:after]
-  end
-  #:startdoc:
-
+  TOKENS[:VARIABLE].acceptable_when Contextual::INSIDE_QUOTES
 
   TOKENS.sort_tokens
 
   @@pairs = {
-    "{" => "}",
-    "(" => ")",
-    "[" => "]",
-    "<|" => "|>",
+    "{"   => "}",
+    "("   => ")",
+    "["   => "]",
+    "<|"  => "|>",
     "<<|" => "|>>"
   }
 
   KEYWORDS = TokenList.new
-
-
-    KEYWORDS.add_tokens(
-
-      "case" => :CASE,
-      "class" => :CLASS,
-      "default" => :DEFAULT,
-      "define" => :DEFINE,
-      "import" => :IMPORT,
-      "if" => :IF,
-      "elsif" => :ELSIF,
-      "else" => :ELSE,
-      "inherits" => :INHERITS,
-      "node" => :NODE,
-      "and"  => :AND,
-      "or"   => :OR,
-      "undef"   => :UNDEF,
-      "false" => :FALSE,
-      "true" => :TRUE,
-
-      "in" => :IN
+  KEYWORDS.add_tokens(
+    "case"     => :CASE,
+    "class"    => :CLASS,
+    "default"  => :DEFAULT,
+    "define"   => :DEFINE,
+    "import"   => :IMPORT,
+    "if"       => :IF,
+    "elsif"    => :ELSIF,
+    "else"     => :ELSE,
+    "inherits" => :INHERITS,
+    "node"     => :NODE,
+    "and"      => :AND,
+    "or"       => :OR,
+    "undef"    => :UNDEF,
+    "false"    => :FALSE,
+    "true"     => :TRUE,
+    "in"       => :IN,
+    "unless"   => :UNLESS
   )
 
   def clear
@@ -341,9 +351,7 @@ class Puppet::Parser::Lexer
     @scanner = StringScanner.new(contents)
   end
 
-  def shift_token
-    @token_queue.shift
-  end
+  def_delegator :@token_queue, :shift, :shift_token
 
   def find_string_token
     # We know our longest string token is three chars, so try each size in turn
@@ -379,14 +387,6 @@ class Puppet::Parser::Lexer
   # Find the next token, returning the string and the token.
   def find_token
     shift_token || find_regex_token || find_string_token
-  end
-
-  def indefine?
-    if defined?(@indefine)
-      @indefine
-    else
-      false
-    end
   end
 
   def initialize
@@ -437,26 +437,19 @@ class Puppet::Parser::Lexer
     return token, { :value => value, :line => @line }
   end
 
-  # Go up one in the namespace.
-  def namepop
-    @namestack.pop
-  end
+  # Handling the namespace stack
+  def_delegator :@namestack, :pop, :namepop
+  # This value might have :: in it, but we don't care -- it'll be handled
+  # normally when joining, and when popping we want to pop this full value,
+  # however long the namespace is.
+  def_delegator :@namestack, :<<, :namestack
 
   # Collect the current namespace.
   def namespace
     @namestack.join("::")
   end
 
-  # This value might have :: in it, but we don't care -- it'll be
-  # handled normally when joining, and when popping we want to pop
-  # this full value, however long the namespace is.
-  def namestack(value)
-    @namestack << value
-  end
-
-  def rest
-    @scanner.rest
-  end
+  def_delegator :@scanner, :rest
 
   # this is the heart of the lexer
   def scan
@@ -536,9 +529,7 @@ class Puppet::Parser::Lexer
 
   # Provide some limited access to the scanner, for those
   # tokens that need it.
-  def scan_until(regex)
-    @scanner.scan_until(regex)
-  end
+  def_delegator :@scanner, :scan_until
 
   # we've encountered the start of a string...
   # slurp in the rest of the string and return it

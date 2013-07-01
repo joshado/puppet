@@ -1,11 +1,9 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 
 describe Puppet::Resource::Catalog do
-  describe "when pson is available", :if => Puppet.features.pson? do
-    it "should support pson" do
-      Puppet::Resource::Catalog.supported_formats.should be_include(:pson)
-    end
+  it "should support pson" do
+    Puppet::Resource::Catalog.supported_formats.should be_include(:pson)
   end
 
   describe "when using the indirector" do
@@ -48,6 +46,7 @@ describe Puppet::Resource::Catalog do
       Puppet::Resource::Catalog.indirection.stubs(:terminus).returns terminus
 
       node = mock 'node'
+      terminus.stubs(:validate)
       terminus.expects(:find).with { |request| request.options[:use_node] == node }
       Puppet::Resource::Catalog.indirection.find("me", :use_node => node)
     end

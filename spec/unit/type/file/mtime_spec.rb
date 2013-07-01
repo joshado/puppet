@@ -1,4 +1,4 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 
 describe Puppet::Type.type(:file).attrclass(:mtime) do

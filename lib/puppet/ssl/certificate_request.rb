@@ -1,4 +1,5 @@
 require 'puppet/ssl/base'
+require 'puppet/ssl/certificate_signer'
 
 # Manage certificate requests.
 class Puppet::SSL::CertificateRequest < Puppet::SSL::Base
@@ -18,16 +19,10 @@ class Puppet::SSL::CertificateRequest < Puppet::SSL::Base
     end
   end
 
-  indirects :certificate_request, :terminus_class => :file, :extend => AutoSigner
-
-  # Convert a string into an instance.
-  def self.from_s(string)
-    instance = wrapped_class.new(string)
-    name = instance.subject.to_s.sub(/\/CN=/i, '').downcase
-    result = new(name)
-    result.content = instance
-    result
-  end
+  indirects :certificate_request, :terminus_class => :file, :extend => AutoSigner, :doc => <<DOC
+    This indirection wraps an `OpenSSL::X509::Request` object, representing a certificate signing request (CSR).
+    The indirection key is the certificate CN (generally a hostname).
+DOC
 
   # Because of how the format handler class is included, this
   # can't be in the base class.
@@ -68,12 +63,13 @@ class Puppet::SSL::CertificateRequest < Puppet::SSL::Base
       csr.add_attribute(OpenSSL::X509::Attribute.new("extReq", extReq))
     end
 
-    csr.sign(key, OpenSSL::Digest::MD5.new)
+    signer = Puppet::SSL::CertificateSigner.new
+    signer.sign(csr, key)
 
     raise Puppet::Error, "CSR sign verification failed; you need to clean the certificate request for #{name} on the server" unless csr.verify(key.public_key)
 
     @content = csr
-    Puppet.info "Certificate Request fingerprint (md5): #{fingerprint}"
+    Puppet.info "Certificate Request fingerprint (#{digest.name}): #{digest.to_hex}"
     @content
   end
 

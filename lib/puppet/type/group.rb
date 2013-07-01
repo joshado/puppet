@@ -21,6 +21,10 @@ module Puppet
     feature :system_groups,
       "The provider allows you to create system groups with lower GIDs."
 
+    feature :libuser,
+      "Allows local groups to be managed on systems that also use some other
+       remote NSS method of managing accounts."
+
     ensurable do
       desc "Create or remove the group."
 
@@ -144,6 +148,25 @@ module Puppet
       newvalues(:true, :false)
 
       defaultto false
+    end
+
+    newparam(:forcelocal, :boolean => true, :required_features => :libuser ) do
+      desc "Forces the mangement of local accounts when accounts are also
+            being managed by some other NSS"
+      newvalues(:true, :false)
+      defaultto false
+    end
+
+    # This method has been exposed for puppet to manage users and groups of
+    # files in its settings and should not be considered available outside of
+    # puppet.
+    #
+    # (see Puppet::Settings#service_group_available?)
+    #
+    # @returns [Boolean] if the group exists on the system
+    # @api private
+    def exists?
+      provider.exists?
     end
   end
 end

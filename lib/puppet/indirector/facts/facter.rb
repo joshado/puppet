@@ -6,21 +6,9 @@ class Puppet::Node::Facts::Facter < Puppet::Indirector::Code
     between Puppet and Facter.  It's only `somewhat` abstract because it always
     returns the local host's facts, regardless of what you attempt to find."
 
-
-  # Clear out all of the loaded facts. Reload facter but not puppet facts.
-  # NOTE: This is clumsy and shouldn't be required for later (1.5.x) versions
-  # of Facter.
   def self.reload_facter
     Facter.clear
-
-    # Reload everything.
-    if Facter.respond_to? :loadfacts
-      Facter.loadfacts
-    elsif Facter.respond_to? :load
-      Facter.load
-    else
-      Puppet.warning "You should upgrade your version of Facter to at least 1.3.8"
-    end
+    Facter.loadfacts
   end
 
   def self.load_fact_plugins
@@ -44,7 +32,7 @@ class Puppet::Node::Facts::Facter < Puppet::Indirector::Code
         fqfile = ::File.join(dir, file)
         begin
           Puppet.info "Loading facts in #{fqfile}"
-          Timeout::timeout(self.timeout) do
+          ::Timeout::timeout(Puppet[:configtimeout]) do
             load file
           end
         rescue SystemExit,NoMemoryError
@@ -54,23 +42,6 @@ class Puppet::Node::Facts::Facter < Puppet::Indirector::Code
         end
       end
     end
-  end
-
-  def self.timeout
-    timeout = Puppet[:configtimeout]
-    case timeout
-    when String
-      if timeout =~ /^\d+$/
-        timeout = Integer(timeout)
-      else
-        raise ArgumentError, "Configuration timeout must be an integer"
-      end
-    when Integer # nothing
-    else
-      raise ArgumentError, "Configuration timeout must be an integer"
-    end
-
-    timeout
   end
 
   def destroy(facts)
@@ -85,7 +56,6 @@ class Puppet::Node::Facts::Facter < Puppet::Indirector::Code
 
     result.add_local_facts
     result.stringify
-    result.downcase_if_necessary
 
     result
   end

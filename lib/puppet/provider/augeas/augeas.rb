@@ -38,6 +38,7 @@ Puppet::Type.type(:augeas).provide(:augeas) do
     "setm" => [ :path, :string, :string ],
     "rm" => [ :path ],
     "clear" => [ :path ],
+    "clearm" => [ :path, :string ],
     "mv" => [ :path, :path ],
     "insert" => [ :string, :string, :path ],
     "get" => [ :path, :comparator, :string ],
@@ -145,7 +146,13 @@ Puppet::Type.type(:augeas).provide(:augeas) do
     unless @aug
       flags = Augeas::NONE
       flags = Augeas::TYPE_CHECK if resource[:type_check] == :true
-      flags |= Augeas::NO_MODL_AUTOLOAD if resource[:incl]
+
+      if resource[:incl]
+        flags |= Augeas::NO_MODL_AUTOLOAD
+      else
+        flags |= Augeas::NO_LOAD
+      end
+
       root = resource[:root]
       load_path = get_load_path(resource)
       debug("Opening augeas with root #{root}, lens path #{load_path}, flags #{flags}")
@@ -153,11 +160,32 @@ Puppet::Type.type(:augeas).provide(:augeas) do
 
       debug("Augeas version #{get_augeas_version} is installed") if versioncmp(get_augeas_version, "0.3.6") >= 0
 
+      # Optimize loading if the context is given and it's a simple path,
+      # requires the glob function from Augeas 0.8.2 or up
+      glob_avail = !aug.match("/augeas/version/pathx/functions/glob").empty?
+      opt_ctx = resource[:context].match("^/files/[^'\"\\[\\]]+$") if resource[:context]
+
+      restricted = false
       if resource[:incl]
         aug.set("/augeas/load/Xfm/lens", resource[:lens])
         aug.set("/augeas/load/Xfm/incl", resource[:incl])
-        aug.load
+        restricted = true
+      elsif glob_avail and opt_ctx
+        # Optimize loading if the context is given, requires the glob function
+        # from Augeas 0.8.2 or up
+        ctx_path = resource[:context].sub(/^\/files(.*?)\/?$/, '\1/')
+        load_path = "/augeas/load/*['%s' !~ glob(incl) + regexp('/.*')]" % ctx_path
+
+        if aug.match(load_path).size < aug.match("/augeas/load/*").size
+          aug.rm(load_path)
+          restricted = true
+        else
+          # This will occur if the context is less specific than any glob
+          debug("Unable to optimize files loaded by context path, no glob matches")
+        end
       end
+      aug.load
+      print_load_errors(:warning => restricted)
     end
     @aug
   end
@@ -279,6 +307,33 @@ Puppet::Type.type(:augeas).provide(:augeas) do
     @aug.set("/augeas/save", mode)
   end
 
+  def print_load_errors(args={})
+    errors = @aug.match("/augeas//error")
+    unless errors.empty?
+      if args[:warning]
+        warning("Loading failed for one or more files, see debug for /augeas//error output")
+      else
+        debug("Loading failed for one or more files, output from /augeas//error:")
+      end
+    end
+    print_errors(errors)
+  end
+
+  def print_put_errors
+    errors = @aug.match("/augeas//error[. = 'put_failed']")
+    debug("Put failed on one or more files, output from /augeas//error:") unless errors.empty?
+    print_errors(errors)
+  end
+
+  def print_errors(errors)
+    errors.each do |errnode|
+      @aug.match("#{errnode}/*").each do |subnode|
+        subvalue = @aug.get(subnode)
+        debug("#{subnode} = #{subvalue}")
+      end
+    end
+  end
+
   # Determines if augeas acutally needs to run.
   def need_to_run?
     force = resource[:force]
@@ -310,7 +365,10 @@ Puppet::Type.type(:augeas).provide(:augeas) do
           set_augeas_save_mode(SAVE_NEWFILE)
           do_execute_changes
           save_result = @aug.save
-          fail("Save failed with return code #{save_result}") unless save_result
+          unless save_result
+            print_put_errors
+            fail("Save failed with return code #{save_result}, see debug")
+          end
 
           saved_files = @aug.match("/augeas/events/saved")
           if saved_files.size > 0
@@ -349,8 +407,10 @@ Puppet::Type.type(:augeas).provide(:augeas) do
     set_augeas_save_mode(SAVE_OVERWRITE) if versioncmp(get_augeas_version, "0.3.6") >= 0
     @aug.load
     do_execute_changes
-    success = @aug.save
-    fail("Save failed with return code #{success}") if success != true
+        unless @aug.save
+          print_put_errors
+          fail("Save failed with return code #{success}, see debug")
+        end
 
     :executed
   ensure
@@ -371,9 +431,13 @@ Puppet::Type.type(:augeas).provide(:augeas) do
             rv = aug.set(cmd_array[0], cmd_array[1])
             fail("Error sending command '#{command}' with params #{cmd_array.inspect}") if (!rv)
           when "setm"
-            debug("sending command '#{command}' with params #{cmd_array.inspect}")
-            rv = aug.setm(cmd_array[0], cmd_array[1], cmd_array[2])
-            fail("Error sending command '#{command}' with params #{cmd_array.inspect}") if (rv == -1)
+            if aug.respond_to?(command)
+              debug("sending command '#{command}' with params #{cmd_array.inspect}")
+              rv = aug.setm(cmd_array[0], cmd_array[1], cmd_array[2])
+              fail("Error sending command '#{command}' with params #{cmd_array.inspect}") if (rv == -1)
+            else
+              fail("command '#{command}' not supported in installed version of ruby-augeas")
+            end
           when "rm", "remove"
             debug("sending command '#{command}' with params #{cmd_array.inspect}")
             rv = aug.rm(cmd_array[0])
@@ -382,6 +446,15 @@ Puppet::Type.type(:augeas).provide(:augeas) do
             debug("sending command '#{command}' with params #{cmd_array.inspect}")
             rv = aug.clear(cmd_array[0])
             fail("Error sending command '#{command}' with params #{cmd_array.inspect}") if (!rv)
+          when "clearm"
+            # Check command exists ... doesn't currently in ruby-augeas 0.4.1
+            if aug.respond_to?(command)
+              debug("sending command '#{command}' with params #{cmd_array.inspect}")
+              rv = aug.clearm(cmd_array[0], cmd_array[1])
+              fail("Error sending command '#{command}' with params #{cmd_array.inspect}") if (!rv)
+            else
+              fail("command '#{command}' not supported in installed version of ruby-augeas")
+            end
           when "insert", "ins"
             label = cmd_array[0]
             where = cmd_array[1]

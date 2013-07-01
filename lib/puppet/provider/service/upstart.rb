@@ -25,15 +25,8 @@ Puppet::Type.type(:service).provide :upstart, :parent => :debian do
   # http://www.linuxplanet.com/linuxplanet/tutorials/7033/2/
   has_feature :enableable
 
-  # 'wait-for-state' is excluded from instances here because it takes
-  # parameters that have unclear meaning. It looks like 'wait-for-state' is
-  # mainly used internally for other upstart services as a 'sleep until something happens'
-  # (http://lists.debian.org/debian-devel/2012/02/msg01139.html). There is an open launchpad bug
-  # (https://bugs.launchpad.net/ubuntu/+source/upstart/+bug/962047) that may
-  # eventually explain how to use this service or perhaps why it should remain
-  # excluded. When that bug is adddressed this should be reexamined.
   def self.instances
-    self.get_services(['wait-for-state'])
+    self.get_services(self.excludes) # Take exclude list from init provider
   end
 
   def self.get_services(exclude=[])
@@ -64,7 +57,7 @@ Puppet::Type.type(:service).provide :upstart, :parent => :debian do
   end
 
   def upstart_version
-    @@upstart_version ||= initctl("--version").match(/initctl \(upstart ([^\)]*)\)/)[1]
+    @upstart_version ||= initctl("--version").match(/initctl \(upstart ([^\)]*)\)/)[1]
   end
 
   # Where is our override script?
@@ -184,7 +177,7 @@ private
     # So we check to see if an uncommented start on or manual stanza is the last one in the file
     # The last one in the file wins.
     enabled = :false
-    script_text.each do |line|
+    script_text.each_line do |line|
       if line.match(START_ON)
         enabled = :true
       elsif line.match(MANUAL)
@@ -200,14 +193,14 @@ private
     # conf file and any override files. The last one in the file wins.
     enabled = :false
 
-    script_text.each do |line|
+    script_text.each_line do |line|
       if line.match(START_ON)
         enabled = :true
       elsif line.match(MANUAL)
         enabled = :false
       end
     end
-    over_text.each do |line|
+    over_text.each_line do |line|
       if line.match(START_ON)
         enabled = :true
       elsif line.match(MANUAL)
@@ -292,7 +285,7 @@ private
 
   def comment_start_block_in(text)
     parens = 0
-    text.map do |line|
+    text.lines.map do |line|
       if line.match(START_ON) || parens > 0
         # If there are more opening parens than closing parens, we need to comment out a multiline 'start on' stanza
         parens += unbalanced_parens_on(remove_trailing_comments_from(line))
@@ -305,7 +298,7 @@ private
 
   def uncomment_start_block_in(text)
     parens = 0
-    text.map do |line|
+    text.lines.map do |line|
       if line.match(COMMENTED_START_ON) || parens > 0
         parens += unbalanced_parens_on(remove_trailing_comments_from_commented_line_of(line))
         uncomment(line)
@@ -317,7 +310,7 @@ private
 
   def extract_start_on_block_from(text)
     parens = 0
-    text.map do |line|
+    text.lines.map do |line|
       if line.match(START_ON) || parens > 0
         parens += unbalanced_parens_on(remove_trailing_comments_from(line))
         line

@@ -1,4 +1,4 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 require 'puppet/agent'
 require 'puppet/run'
@@ -14,13 +14,23 @@ describe Puppet::Run do
 
   it "should use a configurer agent as its agent" do
     agent = mock 'agent'
-    Puppet::Agent.expects(:new).with(Puppet::Configurer).returns agent
+    Puppet::Agent.expects(:new).with(Puppet::Configurer, anything).returns agent
 
     @runner.agent.should equal(agent)
   end
 
   it "should accept options at initialization" do
-    lambda { Puppet::Run.new :background => true }.should_not raise_error
+    expect do
+      Puppet::Run.new(
+        :background => true,
+        :tags => 'tag',
+        :ignoreschedules => false,
+        :pluginsync => true)
+    end.not_to raise_error
+  end
+
+  it "should not accept arbitrary options" do
+    lambda { Puppet::Run.new(:foo => true) }.should raise_error(ArgumentError)
   end
 
   it "should default to running in the foreground" do
@@ -45,10 +55,6 @@ describe Puppet::Run do
 
   it "should retain the background option" do
     Puppet::Run.new(:background => true).options[:background].should be_nil
-  end
-
-  it "should not accept arbitrary options" do
-    lambda { Puppet::Run.new(:foo => true) }.should raise_error(ArgumentError)
   end
 
   describe "when asked to run" do
@@ -116,21 +122,38 @@ describe Puppet::Run do
   end
 
   describe ".from_pson" do
-    it "should accept a hash of options, and pass them with symbolified keys to new" do
+    it "should read from a hash that represents the 'options' to initialize" do
       options = {
         "tags" => "whatever",
         "background" => true,
+        "ignoreschedules" => false,
       }
+      run = Puppet::Run.from_pson(options)
 
-
-            Puppet::Run.expects(:new).with(
-        {
+      run.options.should == {
         :tags => "whatever",
-        :background => true,
-        
-      })
+        :pluginsync => Puppet[:pluginsync],
+        :ignoreschedules => false,
+      }
+      run.background.should be_true
+    end
 
-      Puppet::Run.from_pson(options)
+    it "should read from a hash that follows the actual object structure" do
+      hash = {"background" => true,
+              "options" => {
+                "pluginsync" => true,
+                "tags" => [],
+                "ignoreschedules" => false},
+              "status" => "success"}
+      run = Puppet::Run.from_pson(hash)
+
+      run.options.should == {
+        :pluginsync => true,
+        :tags => [],
+        :ignoreschedules => false
+      }
+      run.background.should be_true
+      run.status.should == 'success'
     end
   end
 end

@@ -28,8 +28,8 @@ class Puppet::Resource
   ATTRIBUTES = [:file, :line, :exported]
 
   def self.from_pson(pson)
-    raise ArgumentError, "No resource type provided in pson data" unless type = pson['type']
-    raise ArgumentError, "No resource title provided in pson data" unless title = pson['title']
+    raise ArgumentError, "No resource type provided in serialized data" unless type = pson['type']
+    raise ArgumentError, "No resource title provided in serialized data" unless title = pson['title']
 
     resource = new(type, title)
 
@@ -46,8 +46,6 @@ class Puppet::Resource
         resource.send(a.to_s + "=", value)
       end
     end
-
-    resource.exported ||= false
 
     resource
   end
@@ -176,6 +174,14 @@ class Puppet::Resource
     end
   end
 
+  def class?
+    @is_class ||= @type == "Class"
+  end
+
+  def stage?
+    @is_stage ||= @type.to_s.downcase == "stage"
+  end
+
   # Create our resource.
   def initialize(type, title = nil, attributes = {})
     @parameters = {}
@@ -190,7 +196,7 @@ class Puppet::Resource
 
     @type = munge_type_name(@type)
 
-    if @type == "Class"
+    if self.class?
       @title = :main if @title == ""
       @title = munge_type_name(@title)
     end
@@ -204,7 +210,7 @@ class Puppet::Resource
 
     @reference = self # for serialization compatibility with 0.25.x
     if strict? and ! resource_type
-      if @type == 'Class'
+      if self.class?
         raise ArgumentError, "Could not find declared class #{title}"
       else
         raise ArgumentError, "Invalid resource type #{type}"
@@ -218,15 +224,15 @@ class Puppet::Resource
 
   # Find our resource.
   def resolve
-    return(catalog ? catalog.resource(to_s) : nil)
+    catalog ? catalog.resource(to_s) : nil
   end
 
   def resource_type
-    case type
+    @rstype ||= case type
     when "Class"; known_resource_types.hostclass(title == :main ? "" : title)
     when "Node"; known_resource_types.node(title)
     else
-      Puppet::Type.type(type.to_s.downcase.to_sym) || known_resource_types.definition(type)
+      Puppet::Type.type(type) || known_resource_types.definition(type)
     end
   end
 
@@ -248,7 +254,7 @@ class Puppet::Resource
   end
 
   def key_attributes
-    return(resource_type.respond_to? :key_attributes) ? resource_type.key_attributes : [:name]
+    resource_type.respond_to?(:key_attributes) ? resource_type.key_attributes : [:name]
   end
 
   # Convert our resource to Puppet code.
@@ -285,59 +291,63 @@ class Puppet::Resource
     end
   end
 
-  # Translate our object to a backward-compatible transportable object.
-  def to_trans
-    if builtin_type? and type.downcase.to_s != "stage"
-      result = to_transobject
-    else
-      result = to_transbucket
-    end
-
-    result.file = self.file
-    result.line = self.line
-
-    result
-  end
-
-  def to_trans_ref
-    [type.to_s, title.to_s]
-  end
-
-  # Create an old-style TransObject instance, for builtin resource types.
-  def to_transobject
-    # Now convert to a transobject
-    result = Puppet::TransObject.new(title, type)
-    to_hash.each do |p, v|
-      if v.is_a?(Puppet::Resource)
-        v = v.to_trans_ref
-      elsif v.is_a?(Array)
-        v = v.collect { |av|
-          av = av.to_trans_ref if av.is_a?(Puppet::Resource)
-          av
-        }
-      end
-
-      # If the value is an array with only one value, then
-      # convert it to a single value.  This is largely so that
-      # the database interaction doesn't have to worry about
-      # whether it returns an array or a string.
-      result[p.to_s] = if v.is_a?(Array) and v.length == 1
-        v[0]
-          else
-            v
-              end
-    end
-
-    result.tags = self.tags
-
-    result
-  end
-
   def name
     # this is potential namespace conflict
     # between the notion of an "indirector name"
     # and a "resource name"
     [ type, title ].join('/')
+  end
+
+  def missing_arguments
+    resource_type.arguments.select do |param, default|
+      param = param.to_sym
+      parameters[param].nil? || parameters[param].value == :undef
+    end
+  end
+  private :missing_arguments
+
+  # Consult external data bindings for class parameter values which must be
+  # namespaced in the backend.
+  #
+  # Example:
+  #
+  #   class foo($port=0){ ... }
+  #
+  # We make a request to the backend for the key 'foo::port' not 'foo'
+  #
+  def lookup_external_default_for(param, scope)
+    if resource_type.type == :hostclass
+      Puppet::DataBinding.indirection.find(
+        "#{resource_type.name}::#{param}",
+        :environment => scope.environment.to_s,
+        :variables => Puppet::DataBinding::Variables.new(scope))
+    else
+      nil
+    end
+  end
+  private :lookup_external_default_for
+
+  def set_default_parameters(scope)
+    return [] unless resource_type and resource_type.respond_to?(:arguments)
+
+    unless is_a?(Puppet::Parser::Resource)
+      fail Puppet::DevError, "Cannot evaluate default parameters for #{self} - not a parser resource"
+    end
+
+    missing_arguments.collect do |param, default|
+      external_value = lookup_external_default_for(param, scope)
+
+      if external_value.nil? && default.nil?
+        next
+      elsif external_value.nil?
+        value = default.safeevaluate(scope)
+      else
+        value = external_value
+      end
+
+      self[param.to_sym] = value
+      param
+    end.compact
   end
 
   def to_resource
@@ -346,6 +356,19 @@ class Puppet::Resource
 
   def valid_parameter?(name)
     resource_type.valid_parameter?(name)
+  end
+
+  # Verify that all required arguments are either present or
+  # have been provided with defaults.
+  # Must be called after 'set_default_parameters'.  We can't join the methods
+  # because Type#set_parameters needs specifically ordered behavior.
+  def validate_complete
+    return unless resource_type and resource_type.respond_to?(:arguments)
+
+    resource_type.arguments.each do |param, default|
+      param = param.to_sym
+      fail Puppet::ParseError, "Must pass #{param} to #{self}" unless parameters.include?(param)
+    end
   end
 
   def validate_parameter(name)
@@ -387,17 +410,6 @@ class Puppet::Resource
     else
       :name
     end
-  end
-
-  # Create an old-style TransBucket instance, for non-builtin resource types.
-  def to_transbucket
-    bucket = Puppet::TransBucket.new([])
-
-    bucket.type = self.type
-    bucket.name = self.title
-
-    # TransBuckets don't support parameters, which is why they're being deprecated.
-    bucket
   end
 
   def extract_parameters(params)

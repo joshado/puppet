@@ -1,5 +1,6 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
+require 'puppet/util/package'
 
 provider_class = Puppet::Type.type(:augeas).provider(:augeas)
 
@@ -569,12 +570,43 @@ describe provider_class do
     it "should handle setm commands" do
       @resource[:changes] = ["set test[1]/Jar/Jar Foo","set test[2]/Jar/Jar Bar","setm test Jar/Jar Binks"]
       @resource[:context] = "/foo/"
+      @augeas.expects(:respond_to?).with("setm").returns(true)
       @augeas.expects(:set).with("/foo/test[1]/Jar/Jar", "Foo").returns(true)
       @augeas.expects(:set).with("/foo/test[2]/Jar/Jar", "Bar").returns(true)
       @augeas.expects(:setm).with("/foo/test", "Jar/Jar", "Binks").returns(true)
       @augeas.expects(:save).returns(true)
       @augeas.expects(:close)
       @provider.execute_changes.should == :executed
+    end
+
+    it "should throw error if setm command not supported" do
+      @resource[:changes] = ["set test[1]/Jar/Jar Foo","set test[2]/Jar/Jar Bar","setm test Jar/Jar Binks"]
+      @resource[:context] = "/foo/"
+      @augeas.expects(:respond_to?).with("setm").returns(false)
+      @augeas.expects(:set).with("/foo/test[1]/Jar/Jar", "Foo").returns(true)
+      @augeas.expects(:set).with("/foo/test[2]/Jar/Jar", "Bar").returns(true)
+      expect { @provider.execute_changes }.to raise_error RuntimeError, /command 'setm' not supported/
+    end
+
+    it "should handle clearm commands" do
+      @resource[:changes] = ["set test[1]/Jar/Jar Foo","set test[2]/Jar/Jar Bar","clearm test Jar/Jar"]
+      @resource[:context] = "/foo/"
+      @augeas.expects(:respond_to?).with("clearm").returns(true)
+      @augeas.expects(:set).with("/foo/test[1]/Jar/Jar", "Foo").returns(true)
+      @augeas.expects(:set).with("/foo/test[2]/Jar/Jar", "Bar").returns(true)
+      @augeas.expects(:clearm).with("/foo/test", "Jar/Jar").returns(true)
+      @augeas.expects(:save).returns(true)
+      @augeas.expects(:close)
+      @provider.execute_changes.should == :executed
+    end
+
+    it "should throw error if clearm command not supported" do
+      @resource[:changes] = ["set test[1]/Jar/Jar Foo","set test[2]/Jar/Jar Bar","clearm test Jar/Jar"]
+      @resource[:context] = "/foo/"
+      @augeas.expects(:respond_to?).with("clearm").returns(false)
+      @augeas.expects(:set).with("/foo/test[1]/Jar/Jar", "Foo").returns(true)
+      @augeas.expects(:set).with("/foo/test[2]/Jar/Jar", "Bar").returns(true)
+      expect { @provider.execute_changes }.to raise_error RuntimeError, /command 'clearm' not supported/
     end
   end
 
@@ -607,6 +639,43 @@ describe provider_class do
     end
   end
 
+  describe "load/save failure reporting" do
+    before do
+      @augeas = stub("augeas")
+      @augeas.stubs("close")
+      @provider.aug = @augeas
+    end
+
+    describe "should find load errors" do
+      before do
+        @augeas.expects(:match).with("/augeas//error").returns(["/augeas/files/foo/error"])
+        @augeas.expects(:match).with("/augeas/files/foo/error/*").returns(["/augeas/files/foo/error/path", "/augeas/files/foo/error/message"])
+        @augeas.expects(:get).with("/augeas/files/foo/error/path").returns("/foo")
+        @augeas.expects(:get).with("/augeas/files/foo/error/message").returns("Failed to...")
+      end
+
+      it "and output to debug" do
+        @provider.expects(:debug).times(4)
+        @provider.print_load_errors
+      end
+
+      it "and output a warning and to debug" do
+        @provider.expects(:warning).once()
+        @provider.expects(:debug).times(3)
+        @provider.print_load_errors(:warning => true)
+      end
+    end
+
+    it "should find save errors and output to debug" do
+      @augeas.expects(:match).with("/augeas//error[. = 'put_failed']").returns(["/augeas/files/foo/error"])
+      @augeas.expects(:match).with("/augeas/files/foo/error/*").returns(["/augeas/files/foo/error/path", "/augeas/files/foo/error/message"])
+      @augeas.expects(:get).with("/augeas/files/foo/error/path").returns("/foo")
+      @augeas.expects(:get).with("/augeas/files/foo/error/message").returns("Failed to...")
+      @provider.expects(:debug).times(4)
+      @provider.print_put_errors
+    end
+  end
+
   # Run initialisation tests of the real Augeas library to test our open_augeas
   # method.  This relies on Augeas and ruby-augeas on the host to be
   # functioning.
@@ -620,11 +689,18 @@ describe provider_class do
       aug.match("/files/etc/test").should == []
     end
 
+    it "should report load errors to debug only" do
+      @provider.expects(:print_load_errors).with(:warning => false)
+      aug = @provider.open_augeas
+      aug.should_not == nil
+    end
+
     # Only the file specified should be loaded
     it "should load one file if incl/lens used" do
       @resource[:incl] = "/etc/hosts"
       @resource[:lens] = "Hosts.lns"
 
+      @provider.expects(:print_load_errors).with(:warning => true)
       aug = @provider.open_augeas
       aug.should_not == nil
       aug.match("/files/etc/fstab").should == []
@@ -650,6 +726,51 @@ describe provider_class do
       aug.match("/files/etc/fstab").should == ["/files/etc/fstab"]
       aug.match("/files/etc/hosts").should == ["/files/etc/hosts"]
       aug.match("/files/etc/test").should == ["/files/etc/test"]
+    end
+
+    # Optimisations added for Augeas 0.8.2 or higher is available, see #7285
+    describe ">= 0.8.2 optimisations", :if => Puppet.features.augeas? && Facter.value(:augeasversion) && Puppet::Util::Package.versioncmp(Facter.value(:augeasversion), "0.8.2") >= 0 do
+      it "should only load one file if relevant context given" do
+        @resource[:context] = "/files/etc/fstab"
+
+        @provider.expects(:print_load_errors).with(:warning => true)
+        aug = @provider.open_augeas
+        aug.should_not == nil
+        aug.match("/files/etc/fstab").should == ["/files/etc/fstab"]
+        aug.match("/files/etc/hosts").should == []
+      end
+
+      it "should only load one lens from load_path if context given" do
+        @resource[:context] = "/files/etc/test"
+        @resource[:load_path] = my_fixture_dir
+
+        @provider.expects(:print_load_errors).with(:warning => true)
+        aug = @provider.open_augeas
+        aug.should_not == nil
+        aug.match("/files/etc/fstab").should == []
+        aug.match("/files/etc/hosts").should == []
+        aug.match("/files/etc/test").should == ["/files/etc/test"]
+      end
+
+      it "should load standard files if context isn't specific" do
+        @resource[:context] = "/files/etc"
+
+        @provider.expects(:print_load_errors).with(:warning => false)
+        aug = @provider.open_augeas
+        aug.should_not == nil
+        aug.match("/files/etc/fstab").should == ["/files/etc/fstab"]
+        aug.match("/files/etc/hosts").should == ["/files/etc/hosts"]
+      end
+
+      it "should not optimise if the context is a complex path" do
+        @resource[:context] = "/files/*[label()='etc']"
+
+        @provider.expects(:print_load_errors).with(:warning => false)
+        aug = @provider.open_augeas
+        aug.should_not == nil
+        aug.match("/files/etc/fstab").should == ["/files/etc/fstab"]
+        aug.match("/files/etc/hosts").should == ["/files/etc/hosts"]
+      end
     end
   end
 

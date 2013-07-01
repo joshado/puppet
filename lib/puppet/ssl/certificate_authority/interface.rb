@@ -1,9 +1,8 @@
-# This class is basically a hidden class that knows how to act
-# on the CA.  It's only used by the 'puppetca' executable, and its
-# job is to provide a CLI-like interface to the CA class.
 module Puppet
   module SSL
     class CertificateAuthority
+      # This class is basically a hidden class that knows how to act on the
+      # CA.  Its job is to provide a CLI-like interface to the CA class.
       class Interface
         INTERFACE_METHODS = [:destroy, :list, :revoke, :generate, :sign, :print, :verify, :fingerprint]
 
@@ -14,21 +13,13 @@ module Puppet
         # Actually perform the work.
         def apply(ca)
           unless subjects or method == :list
-            raise ArgumentError, "You must provide hosts or :all when using #{method}"
+            raise ArgumentError, "You must provide hosts or --all when using #{method}"
           end
 
-          begin
-            return send(method, ca) if respond_to?(method)
+          return send(method, ca) if respond_to?(method)
 
-            (subjects == :all ? ca.list : subjects).each do |host|
-              ca.send(method, host)
-            end
-          rescue InterfaceError
-            raise
-          rescue => detail
-            puts detail.backtrace if Puppet[:trace]
-            Puppet.err "Could not call #{method}: #{detail}"
-            raise
+          (subjects == :all ? ca.list : subjects).each do |host|
+            ca.send(method, host)
           end
         end
 
@@ -43,7 +34,7 @@ module Puppet
         def initialize(method, options)
           self.method = method
           self.subjects = options.delete(:to)
-          @digest = options.delete(:digest) || :MD5
+          @digest = options.delete(:digest)
           @options = options
         end
 
@@ -104,12 +95,12 @@ module Puppet
         end
 
         def format_host(ca, host, type, info, width)
-          certish, verify_error = info
+          cert, verify_error = info
           alt_names = case type
                       when :signed
-                        certish.subject_alt_names
+                        cert.subject_alt_names
                       when :request
-                        certish.subject_alt_names
+                        cert.subject_alt_names
                       else
                         []
                       end
@@ -121,7 +112,7 @@ module Puppet
           glyph = {:signed => '+', :request => ' ', :invalid => '-'}[type]
 
           name = host.inspect.ljust(width)
-          fingerprint = "(#{ca.fingerprint(host, @digest)})"
+          fingerprint = cert.digest(@digest).to_s
 
           explanation = "(#{verify_error})" if verify_error
 
@@ -148,8 +139,8 @@ module Puppet
         # Print certificate information.
         def fingerprint(ca)
           (subjects == :all ? ca.list + ca.waiting?: subjects).each do |host|
-            if value = ca.fingerprint(host, @digest)
-              puts "#{host} #{value}"
+            if cert = (Puppet::SSL::Certificate.indirection.find(host) || Puppet::SSL::CertificateRequest.indirection.find(host))
+              puts "#{host} #{cert.digest(@digest)}"
             else
               Puppet.err "Could not find certificate for #{host}"
             end

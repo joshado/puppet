@@ -36,8 +36,7 @@ class Puppet::Transaction::Report::Processor < Puppet::Indirector::Code
         newrep.extend(mod)
         newrep.process
       rescue => detail
-        puts detail.backtrace if Puppet[:trace]
-        Puppet.err "Report #{name} failed: #{detail}"
+        Puppet.log_exception(detail, "Report #{name} failed: #{detail}")
       end
     end
   end
@@ -49,7 +48,7 @@ class Puppet::Transaction::Report::Processor < Puppet::Indirector::Code
   end
 
   def processors(&blk)
-    return if Puppet[:reports] == "none"
+    return [] if Puppet[:reports] == "none"
     reports.each do |name|
       if mod = Puppet::Reports.report(name)
         yield(mod)

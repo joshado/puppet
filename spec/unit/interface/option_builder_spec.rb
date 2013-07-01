@@ -1,4 +1,4 @@
-require 'puppet/interface/option_builder'
+require 'puppet/interface'
 
 describe Puppet::Interface::OptionBuilder do
   let :face do Puppet::Interface.new(:option_builder_testing, '0.0.1') end
@@ -6,6 +6,14 @@ describe Puppet::Interface::OptionBuilder do
   it "should be able to construct an option without a block" do
     Puppet::Interface::OptionBuilder.build(face, "--foo").
       should be_an_instance_of Puppet::Interface::Option
+  end
+
+  Puppet.settings.each do |name, value|
+    it "should fail when option #{name.inspect} already exists in puppet core" do
+      expect do
+        Puppet::Interface::OptionBuilder.build(face, "--#{name}")
+      end.to raise_error ArgumentError, /already defined/
+    end
   end
 
   it "should work with an empty block" do
@@ -72,6 +80,6 @@ describe Puppet::Interface::OptionBuilder do
       end
       opt.should_not be_required
     end
-
+    
   end
 end

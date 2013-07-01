@@ -8,6 +8,11 @@ $LOAD_PATH.unshift File.join(dir, 'lib')
 # Don't want puppet getting the command line arguments for rake or autotest
 ARGV.clear
 
+begin
+  require 'rubygems'
+rescue LoadError
+end
+
 require 'puppet'
 gem 'rspec', '>=2.0.0'
 require 'rspec/expectations'
@@ -19,9 +24,11 @@ end
 
 require 'pathname'
 require 'tmpdir'
+require 'fileutils'
 
 require 'puppet_spec/verbose'
 require 'puppet_spec/files'
+require 'puppet_spec/settings'
 require 'puppet_spec/fixtures'
 require 'puppet_spec/matchers'
 require 'puppet_spec/database'
@@ -40,13 +47,35 @@ end
 RSpec.configure do |config|
   include PuppetSpec::Fixtures
 
+  # Examples or groups can selectively tag themselves as broken.
+  # For example;
+  #
+  # rbv = "#{RUBY_VERSION}-p#{RbConfig::CONFIG['PATCHLEVEL']}"
+  # describe "mostly working", :broken => false unless rbv == "1.9.3-p327" do
+  #  it "parses a valid IP" do
+  #    IPAddr.new("::2:3:4:5:6:7:8")
+  #  end
+  # end
+  config.filter_run_excluding :broken => true
+
   config.mock_with :mocha
+
+  tmpdir = Dir.mktmpdir("rspecrun")
+  oldtmpdir = Dir.tmpdir()
+  ENV['TMPDIR'] = tmpdir
 
   if Puppet::Util::Platform.windows?
     config.output_stream = $stdout
     config.error_stream = $stderr
-    config.formatters.each { |f| f.instance_variable_set(:@output, $stdout) }
+
+    config.formatters.each do |f|
+      if not f.instance_variable_get(:@output).kind_of?(::File)
+        f.instance_variable_set(:@output, $stdout)
+      end
+    end
   end
+
+  Puppet::Test::TestHelper.initialize
 
   config.before :all do
     Puppet::Test::TestHelper.before_all_tests()
@@ -104,5 +133,20 @@ RSpec.configure do |config|
     # experimented with forcing a GC run, and that was less efficient than
     # just letting it run all the time.
     GC.enable
+  end
+
+  config.after :suite do
+    # Log the spec order to a file, but only if the LOG_SPEC_ORDER environment variable is
+    #  set.  This should be enabled on Jenkins runs, as it can be used with Nick L.'s bisect
+    #  script to help identify and debug order-dependent spec failures.
+    if ENV['LOG_SPEC_ORDER']
+      File.open("./spec_order.txt", "w") do |logfile|
+        config.instance_variable_get(:@files_to_run).each { |f| logfile.puts f }
+      end
+    end
+    # Clean up switch of TMPDIR, don't know if needed after this, so needs to reset it
+    # to old before removing it
+    ENV['TMPDIR'] = oldtmpdir
+    FileUtils.rm_rf(tmpdir) if File.exists?(tmpdir) && tmpdir.to_s.start_with?(oldtmpdir)
   end
 end

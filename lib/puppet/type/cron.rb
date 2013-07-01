@@ -10,11 +10,12 @@ Puppet::Type.newtype(:cron) do
     job is not part of the actual job, it is used by Puppet to store and
     retrieve it.
 
-    If you specify a cron job that matches an existing job in every way
-    except name, then the jobs will be considered equivalent and the
-    new name will be permanently associated with that job.  Once this
-    association is made and synced to disk, you can then manage the job
-    normally (e.g., change the schedule of the job).
+    If you specify a cron resource that duplicates the scheduling and command
+    used by an existing crontab entry, then Puppet will take no action and
+    defers to the existing crontab entry.  If the duplicate cron resource
+    specifies `ensure => absent`, all existing duplicated crontab entries will
+    be removed.  Specifying multiple duplicate cron resources with different
+    `ensure` states will result in undefined behavior.
 
     Example:
 
@@ -42,6 +43,13 @@ Puppet::Type.newtype(:cron) do
           hour    => ['2-4'],
           minute  => '*/10'
         }
+
+    An important note: _the Cron type will not reset parameters that are
+    removed from a manifest_. For example, removing a `minute => 10` parameter
+    will not reset the minute component of the associated cronjob to `*`.
+    These changes must be expressed by setting the parameter to
+    `minute => absent` because Puppet only manages parameters that are out of
+    sync with manifest entries.
   EOT
   ensurable
 
@@ -224,6 +232,12 @@ Puppet::Type.newtype(:cron) do
         nil
       end
     end
+
+    def munge(value)
+      value.sub!(/^\s+/, '')
+      value.sub!(/\s+$/, '')
+      value
+    end
   end
 
   newproperty(:special) do
@@ -364,9 +378,9 @@ Puppet::Type.newtype(:cron) do
   end
 
   newproperty(:target) do
-    desc "Where the cron job should be stored.  For crontab-style
-      entries this is the same as the user and defaults that way.
-      Other providers default accordingly."
+    desc "The username that will own the cron entry. Defaults to
+    the value of $USER for the shell that invoked Puppet, or root if $USER
+    is empty."
 
     defaultto {
       if provider.is_a?(@resource.class.provider(:crontab))
@@ -374,7 +388,7 @@ Puppet::Type.newtype(:cron) do
           val
         else
           raise ArgumentError,
-            "You must provide a user with crontab entries"
+            "You must provide a username with crontab entries"
         end
       elsif provider.class.ancestors.include?(Puppet::Provider::ParsedFile)
         provider.class.default_target
@@ -416,6 +430,4 @@ Puppet::Type.newtype(:cron) do
     ret
   end
 end
-
-
 

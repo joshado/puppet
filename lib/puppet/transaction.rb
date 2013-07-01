@@ -12,8 +12,7 @@ class Puppet::Transaction
   require 'puppet/transaction/resource_harness'
   require 'puppet/resource/status'
 
-  attr_accessor :component, :catalog, :ignoreschedules, :for_network_device
-  attr_accessor :configurator
+  attr_accessor :catalog, :ignoreschedules, :for_network_device
 
   # The report, once generated.
   attr_reader :report
@@ -151,10 +150,9 @@ class Puppet::Transaction
     begin
       made = resource.eval_generate.uniq
       return false if made.empty?
-      made = made.inject({}) {|a,v| a.merge(v.name => v) }
+      made = Hash[made.map(&:name).zip(made)]
     rescue => detail
-      puts detail.backtrace if Puppet[:trace]
-      resource.err "Failed to generate additional resources using 'eval_generate: #{detail}"
+      resource.log_exception(detail, "Failed to generate additional resources using 'eval_generate: #{detail}")
       return false
     end
     made.values.each do |res|
@@ -203,8 +201,7 @@ class Puppet::Transaction
     begin
       made = resource.generate
     rescue => detail
-      puts detail.backtrace if Puppet[:trace]
-      resource.err "Failed to generate additional resources using 'generate': #{detail}"
+      resource.log_exception(detail, "Failed to generate additional resources using 'generate': #{detail}")
     end
     return unless made
     made = [made] unless made.is_a?(Array)
@@ -227,7 +224,7 @@ class Puppet::Transaction
 
   # Should we ignore tags?
   def ignore_tags?
-    ! (@catalog.host_config? or Puppet[:name] == "puppet")
+    ! @catalog.host_config?
   end
 
   # this should only be called by a Puppet::Type::Component resource now
@@ -235,7 +232,7 @@ class Puppet::Transaction
   def initialize(catalog, report = nil)
     @catalog = catalog
 
-    @report = report || Puppet::Transaction::Report.new("apply", catalog.version, Puppet[:environment])
+    @report = report || Puppet::Transaction::Report.new("apply", catalog.version, catalog.environment)
 
     @event_manager = Puppet::Transaction::EventManager.new(self)
 
@@ -285,8 +282,7 @@ class Puppet::Transaction
     begin
       provider_class.prefetch(resources)
     rescue => detail
-      puts detail.backtrace if Puppet[:trace]
-      Puppet.err "Could not prefetch #{type_name} provider '#{provider_class.name}': #{detail}"
+      Puppet.log_exception(detail, "Could not prefetch #{type_name} provider '#{provider_class.name}': #{detail}")
     end
     @prefetched_providers[type_name][provider_class.name] = true
   end

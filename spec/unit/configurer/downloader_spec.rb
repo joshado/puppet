@@ -1,4 +1,4 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 
 require 'puppet/configurer/downloader'
@@ -19,15 +19,6 @@ describe Puppet::Configurer::Downloader do
     dler.name.should == "facts"
     dler.path.should == "path"
     dler.source.should == "source"
-  end
-
-  it "should be able to provide a timeout value" do
-    Puppet::Configurer::Downloader.should respond_to(:timeout)
-  end
-
-  it "should use the configtimeout, converted to an integer, as its timeout" do
-    Puppet.settings.expects(:value).with(:configtimeout).returns "50"
-    Puppet::Configurer::Downloader.timeout.should == 50
   end
 
   describe "when creating the file that does the downloading" do
@@ -154,8 +145,8 @@ describe Puppet::Configurer::Downloader do
       @dler.evaluate
     end
 
-    it "should set a timeout for the download" do
-      Puppet::Configurer::Downloader.expects(:timeout).returns 50
+    it "should set a timeout for the download using the `configtimeout` setting" do
+      Puppet[:configtimeout] = 50
       Timeout.expects(:timeout).with(50)
 
       @dler.evaluate

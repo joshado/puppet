@@ -6,7 +6,7 @@ require 'time'
 
 Puppet::Reports.register_report(:tagmail) do
   desc "This report sends specific log messages to specific email addresses
-    based on the tags in the log messages.  
+    based on the tags in the log messages.
 
     See the [documentation on tags](http://projects.puppetlabs.com/projects/puppet/wiki/Using_Tags) for more information.
 
@@ -35,7 +35,7 @@ Puppet::Reports.register_report(:tagmail) do
 
     If you are using anti-spam controls such as grey-listing on your mail
     server, you should whitelist the sending email address (controlled by
-    `reportform` configuration option) to ensure your email is not discarded as spam.
+    `reportfrom` configuration option) to ensure your email is not discarded as spam.
     "
 
   # Find all matching messages.
@@ -146,9 +146,9 @@ Puppet::Reports.register_report(:tagmail) do
             end
           end
         rescue => detail
-          puts detail.backtrace if Puppet[:debug]
-          raise Puppet::Error,
-            "Could not send report emails through smtp: #{detail}"
+          message = "Could not send report emails through smtp: #{detail}"
+          Puppet.log_exception(detail, message)
+          raise Puppet::Error, message
         end
       elsif Puppet[:sendmail] != ""
         begin
@@ -163,9 +163,9 @@ Puppet::Reports.register_report(:tagmail) do
             end
           end
         rescue => detail
-          puts detail.backtrace if Puppet[:debug]
-          raise Puppet::Error,
-            "Could not send report emails via sendmail: #{detail}"
+          message = "Could not send report emails via sendmail: #{detail}"
+          Puppet.log_exception(detail, message)
+          raise Puppet::Error, message
         end
       else
         raise Puppet::Error, "SMTP server is unset and could not find sendmail"

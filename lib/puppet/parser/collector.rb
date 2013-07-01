@@ -1,7 +1,8 @@
 # An object that collects stored objects from the central cache and returns
 # them to the current host, yo.
 class Puppet::Parser::Collector
-  attr_accessor :type, :scope, :vquery, :equery, :form, :resources, :overrides, :collected
+  attr_accessor :type, :scope, :vquery, :equery, :form
+  attr_accessor :resources, :overrides, :collected
 
   # Call the collection method, mark all of the returned objects as
   # non-virtual, optionally applying parameter overrides. The collector can
@@ -31,7 +32,7 @@ class Puppet::Parser::Collector
     # we have an override for the collected resources
     if @overrides and !objects.empty?
       # force the resource to be always child of any other resource
-      overrides[:source].meta_def(:child_of?) do
+      overrides[:source].meta_def(:child_of?) do |klass|
         true
       end
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 
 require 'spec_helper'
 
@@ -136,6 +136,12 @@ describe Puppet::Type.type(:file).attrclass(:mode) do
 
       it 'returns the 4-digit mode when the first digit is not a zero' do
         mode.is_to_s('1755').should == '1755'
+      end
+    end
+
+    describe 'when passed :absent' do
+      it 'returns :absent' do
+        mode.is_to_s(:absent).should == :absent
       end
     end
   end

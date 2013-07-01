@@ -4,7 +4,7 @@ agents.each do |agent|
   file = agent.tmpfile('4131-require-ip')
 
   step "configure the target system for the test"
-  on agent, "rm -vrf #{file} ; touch #{file}"
+  on agent, "rm -rf #{file} ; touch #{file}"
 
   step "try to create the host, which should fail"
   # REVISIT: This step should properly need to handle the non-zero exit code,
@@ -13,7 +13,7 @@ agents.each do |agent|
   on(agent, puppet_resource('host', 'test', "target=#{file}",
               "host_aliases=alias")) do
     fail_test "puppet didn't complain about the missing attribute" unless
-      stdout.include? 'ip is a required attribute for hosts'
+      stderr.include? 'ip is a required attribute for hosts'
   end
 
   step "verify that the host was not added to the file"

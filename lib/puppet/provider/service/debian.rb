@@ -18,10 +18,6 @@ Puppet::Type.type(:service).provide :debian, :parent => :init do
 
   defaultfor :operatingsystem => [:debian, :ubuntu]
 
-  def self.defpath
-    superclass.defpath
-  end
-
   # Remove the symlinks
   def disable
     if `dpkg --compare-versions $(dpkg-query -W --showformat '${Version}' sysv-rc) ge 2.88 ; echo $?`.to_i == 0
@@ -33,7 +29,7 @@ Puppet::Type.type(:service).provide :debian, :parent => :init do
   end
 
   def enabled?
-    # TODO: Replace system call when Puppet::Util.execute gives us a way
+    # TODO: Replace system call when Puppet::Util::Execution.execute gives us a way
     # to determine exit status.  http://projects.reductivelabs.com/issues/2538
     system("/usr/sbin/invoke-rc.d", "--quiet", "--query", @resource[:name], "start")
 

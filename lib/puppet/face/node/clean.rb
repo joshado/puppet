@@ -9,17 +9,17 @@ Puppet::Face.define(:node, '0.0.1') do
     description <<-'EOT'
       Clean up everything a puppet master knows about a node, including certificates
       and storeconfigs data.
-      
+
       The full list of info cleaned by this action is:
 
       <Signed certificates> - ($vardir/ssl/ca/signed/node.domain.pem)
-      
+
       <Cached facts> - ($vardir/yaml/facts/node.domain.yaml)
-      
+
       <Cached node objects> - ($vardir/yaml/node/node.domain.yaml)
-      
+
       <Reports> - ($vardir/reports/node.domain)
-      
+
       <Stored configs> - (in database) The clean action can either remove all
       data from a host in your storeconfigs database, or, with the
       <--unexport> option, turn every exported resource supporting ensure to
@@ -34,10 +34,13 @@ Puppet::Face.define(:node, '0.0.1') do
       options = args.last
       raise "At least one node should be passed" if nodes.empty? || nodes == options
 
-      # TODO: this is a hack and should be removed if faces provide the proper
-      # infrastructure to set the run mode.
-      require 'puppet/util/run_mode'
-      $puppet_application_mode = Puppet::Util::RunMode[:master]
+      # This seems really bad; run_mode should be set as part of a class
+      # definition, and should not be modifiable beyond that.  This is one of
+      # the only places left in the code that tries to manipulate it. Other
+      # parts of code that handle certificates behave differently if the the
+      # run_mode is master. Those other behaviors are needed for cleaning the
+      # certificates correctly.
+      Puppet.settings.preferred_run_mode = "master"
 
       if Puppet::SSL::CertificateAuthority.ca?
         Puppet::SSL::Host.ca_location = :local

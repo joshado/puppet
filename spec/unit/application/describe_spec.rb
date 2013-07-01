@@ -1,4 +1,4 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 
 require 'puppet/application/describe'
@@ -6,10 +6,6 @@ require 'puppet/application/describe'
 describe Puppet::Application::Describe do
   before :each do
     @describe = Puppet::Application[:describe]
-  end
-
-  it "should ask Puppet::Application to not parse Puppet configuration file" do
-    @describe.should_parse_config?.should be_false
   end
 
   it "should declare a main command" do
@@ -33,7 +29,7 @@ describe Puppet::Application::Describe do
 
 
   describe "in preinit" do
-    it "should set options[:parameteers] to true" do
+    it "should set options[:parameters] to true" do
       @describe.preinit
 
       @describe.options[:parameters].should be_true

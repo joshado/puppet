@@ -46,7 +46,7 @@ module Puppet::ModuleTool::Errors
         message << "    Currently, '#{@metadata[:name]}' (#{v(@metadata[:version])}) is installed to that directory"
       end
 
-      message << "    Use `puppet module install --dir <DIR>` to install modules elsewhere"
+      message << "    Use `puppet module install --target-dir <DIR>` to install modules elsewhere"
 
       if @dependency
         message << "    Use `puppet module install --ignore-dependencies` to install only this module"
@@ -72,18 +72,55 @@ Could not install package #{@requested_package}
     end
   end
 
-  class MissingInstallDirectoryError < InstallError
-    def initialize(options)
+  class InstallPathExistsNotDirectoryError < InstallError
+    def initialize(original, options)
       @requested_module  = options[:requested_module]
       @requested_version = options[:requested_version]
       @directory         = options[:directory]
-      super "'#{@requested_module}' (#{@requested_version}) requested; Directory #{@directory} does not exist"
+      super("'#{@requested_module}' (#{@requested_version}) requested; Path #{@directory} is not a directory.", original)
     end
 
     def multiline
       <<-MSG.strip
 Could not install module '#{@requested_module}' (#{@requested_version})
-  Directory #{@directory} does not exist
+  Path '#{@directory}' exists but is not a directory.
+  A potential solution is to rename the path and then
+  mkdir -p '#{@directory}'
+      MSG
+    end
+  end
+
+  class PermissionDeniedCreateInstallDirectoryError < InstallError
+    def initialize(original, options)
+      @requested_module  = options[:requested_module]
+      @requested_version = options[:requested_version]
+      @directory         = options[:directory]
+      super("'#{@requested_module}' (#{@requested_version}) requested; Permission is denied to create #{@directory}.", original)
+    end
+
+    def multiline
+      <<-MSG.strip
+Could not install module '#{@requested_module}' (#{@requested_version})
+  Permission is denied when trying to create directory '#{@directory}'.
+  A potential solution is to check the ownership and permissions of
+  parent directories.
+      MSG
+    end
+  end
+
+  class InvalidPathInPackageError < InstallError
+    def initialize(options)
+      @requested_package = options[:requested_package]
+      @entry_path        = options[:entry_path]
+      @directory         = options[:directory]
+      super "Attempt to install file into #{@entry_path.inspect} under #{@directory.inspect}"
+    end
+
+    def multiline
+      <<-MSG.strip
+Could not install package #{@requested_package}
+  Package #{@requested_package} attempted to install file into
+  #{@entry_path.inspect} under #{@directory.inspect}.
       MSG
     end
   end

@@ -5,6 +5,17 @@ require 'puppet/indirector/active_record'
 require 'puppet/util/retryaction'
 
 class Puppet::Node::Facts::InventoryActiveRecord < Puppet::Indirector::ActiveRecord
+
+  desc "Medium-performance fact storage suitable for the inventory service.
+    Most users should use PuppetDB instead. Note: ActiveRecord-based storeconfigs
+    and inventory are deprecated. See http://links.puppetlabs.com/activerecord-deprecation"
+
+  def initialize
+    raise Puppet::Error, "ActiveRecords-based inventory is unsupported with Ruby 2 and Rails 3.0" if RUBY_VERSION[0] == '2'
+    Puppet.deprecation_warning "ActiveRecord-based storeconfigs and inventory are deprecated. See http://links.puppetlabs.com/activerecord-deprecation"
+    super
+  end
+
   def find(request)
     node = Puppet::Rails::InventoryNode.find_by_name(request.key)
     return nil unless node

@@ -1,4 +1,4 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 
 ssh_authorized_key = Puppet::Type.type(:ssh_authorized_key)
@@ -223,7 +223,7 @@ describe ssh_authorized_key, :unless => Puppet.features.microsoft_windows? do
   describe "when user is specified" do
 
     it "should determine target" do
-      resource = @class.create(
+      resource = @class.new(
         :name   => "Test",
         :user   => "root"
       )
@@ -243,7 +243,7 @@ describe ssh_authorized_key, :unless => Puppet.features.microsoft_windows? do
   describe "when calling validate" do
 
     it "should not crash on a non-existant user" do
-      resource = @class.create(
+      resource = @class.new(
         :name   => "Test",
         :user   => "ihopesuchuserdoesnotexist"
       )

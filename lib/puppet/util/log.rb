@@ -135,7 +135,7 @@ class Puppet::Util::Log
       flushqueue
       @destinations[dest]
     rescue => detail
-      puts detail.backtrace if Puppet[:debug]
+      Puppet.log_exception(detail)
 
       # If this was our only destination, then add the console back in.
       newdestination(:console) if @destinations.empty? and (dest != :console and dest != "console")
@@ -168,6 +168,20 @@ class Puppet::Util::Log
       Log.newmessage(msg)
     end
     @queued.clear
+  end
+
+  # Flush the logging queue.  If there are no destinations available,
+  #  adds in a console logger before flushing the queue.
+  # This is mainly intended to be used as a last-resort attempt
+  #  to ensure that logging messages are not thrown away before
+  #  the program is about to exit--most likely in a horrific
+  #  error scenario.
+  # @return nil
+  def Log.force_flushqueue()
+    if (@destinations.empty? and !(@queued.empty?))
+      newdestination(:console)
+    end
+    flushqueue
   end
 
   def Log.sendlevel?(level)
@@ -206,6 +220,12 @@ class Puppet::Util::Log
     @levels.include?(level)
   end
 
+  def self.from_pson(data)
+    obj = allocate
+    obj.initialize_from_hash(data)
+    obj
+  end
+
   attr_accessor :time, :remote, :file, :line, :source
   attr_reader :level, :message
 
@@ -228,6 +248,19 @@ class Puppet::Util::Log
     Log.newmessage(self)
   end
 
+  def initialize_from_hash(data)
+    @level = data['level'].intern
+    @message = data['message']
+    @source = data['source']
+    @tags = data['tags']
+    @time = data['time']
+    if @time.is_a? String
+      @time = Time.parse(@time)
+    end
+    @file = data['file'] if data['file']
+    @line = data['line'] if data['line']
+  end
+
   def message=(msg)
     raise ArgumentError, "Puppet::Util::Log requires a message" unless msg
     @message = msg.to_s
@@ -235,6 +268,7 @@ class Puppet::Util::Log
 
   def level=(level)
     raise ArgumentError, "Puppet::Util::Log requires a log level" unless level
+    raise ArgumentError, "Puppet::Util::Log requires a symbol or string" unless level.respond_to? "to_sym"
     @level = level.to_sym
     raise ArgumentError, "Invalid log level #{@level}" unless self.class.validlevel?(@level)
 

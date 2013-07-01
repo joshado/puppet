@@ -1,4 +1,4 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 require 'puppet/application/face_base'
 require 'tmpdir'
@@ -12,6 +12,10 @@ describe Puppet::Application::FaceBase do
     app.command_line.stubs(:subcommand_name).returns('subcommand')
     Puppet::Util::Log.stubs(:newdestination)
     app
+  end
+
+  after :each do
+    app.class.clear_everything_for_tests
   end
 
   describe "#find_global_settings_argument" do
@@ -54,9 +58,10 @@ describe Puppet::Application::FaceBase do
 
     it "should stop if the first thing found is not an action" do
       app.command_line.stubs(:args).returns %w{banana count_args}
+
       expect { app.run }.to exit_with 1
-      @logs.first.should_not be_nil
-      @logs.first.message.should =~ /has no 'banana' action/
+
+      @logs.map(&:message).should == ["'basetest' has no 'banana' action.  See `puppet help basetest`."]
     end
 
     it "should use the default action if not given any arguments" do
@@ -155,11 +160,28 @@ describe Puppet::Application::FaceBase do
         to raise_error OptionParser::InvalidOption, /invalid option: --bar/
     end
 
+    it "does not skip when a puppet global setting is given as one item" do
+      app.command_line.stubs(:args).returns %w{--confdir=/tmp/puppet foo}
+      app.preinit
+      app.parse_options
+      app.action.name.should == :foo
+      app.options.should == {}
+    end
+
+    it "does not skip when a puppet global setting is given as two items" do
+      app.command_line.stubs(:args).returns %w{--confdir /tmp/puppet foo}
+      app.preinit
+      app.parse_options
+      app.action.name.should == :foo
+      app.options.should == {}
+    end
+
     { "boolean options before" => %w{--trace foo},
       "boolean options after"  => %w{foo --trace}
     }.each do |name, args|
       it "should accept global boolean settings #{name} the action" do
         app.command_line.stubs(:args).returns args
+        Puppet.settings.initialize_global_settings(args)
         app.preinit
         app.parse_options
         Puppet[:trace].should be_true
@@ -171,13 +193,14 @@ describe Puppet::Application::FaceBase do
     }.each do |name, args|
       it "should accept global settings with arguments #{name} the action" do
         app.command_line.stubs(:args).returns args
+        Puppet.settings.initialize_global_settings(args)
         app.preinit
         app.parse_options
         Puppet[:syslogfacility].should == "user1"
       end
     end
 
-    it "should handle application-level options", :'fails_on_ruby_1.9.2' => true do
+    it "should handle application-level options" do
       app.command_line.stubs(:args).returns %w{--verbose return_true}
       app.preinit
       app.parse_options
@@ -195,7 +218,8 @@ describe Puppet::Application::FaceBase do
     end
 
     it "should pass positional arguments" do
-      app.command_line.stubs(:args).returns %w{--mandatory --bar foo bar baz quux}
+      myargs = %w{--mandatory --bar foo bar baz quux}
+      app.command_line.stubs(:args).returns(myargs)
       app.preinit
       app.parse_options
       app.setup
@@ -266,8 +290,8 @@ describe Puppet::Application::FaceBase do
 
   describe "#render" do
     before :each do
-      app.face      = Puppet::Face[:basetest, '0.0.1']
-      app.action    = app.face.get_action(:foo)
+      app.face      = Puppet::Interface.new('basetest', '0.0.1')
+      app.action    = Puppet::Interface::Action.new(app.face, :foo)
     end
 
     context "default rendering" do
@@ -360,9 +384,10 @@ EOT
       # it, but this helps us fail if that slips up and all. --daniel 2011-04-27
       Puppet::Face[:help, :current].expects(:help).never
 
-      expect {
-        expect { app.run }.to exit_with 1
-      }.to have_printed(/I don't know how to render 'interpretive-dance'/)
+      Puppet.expects(:err).with("Could not parse application options: I don't know how to render 'interpretive-dance'")
+
+      expect { app.run }.to exit_with 1
+
     end
 
     it "should work if asked to render a NetworkHandler format" do

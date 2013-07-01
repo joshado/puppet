@@ -1,13 +1,10 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 
 require 'puppet/defaults'
 require 'puppet/rails'
 
 describe "Puppet defaults" do
-  include Puppet::Util::Execution
-  after { Puppet.settings.clear }
-
   describe "when setting the :factpath" do
     it "should add the :factpath to Facter's search paths" do
       Facter.expects(:search).with("/my/fact/path")
@@ -55,16 +52,9 @@ describe "Puppet defaults" do
     end
   end
 
-  describe "when configuring the :crl" do
-    it "should warn if :cacrl is set to false" do
-      Puppet.expects(:warning)
-      Puppet.settings[:cacrl] = 'false'
-    end
-  end
-
   describe "when setting the :catalog_format" do
     it "should log a deprecation notice" do
-      Puppet.expects(:warning)
+      Puppet.expects(:deprecation_warning)
       Puppet.settings[:catalog_format] = 'marshal'
     end
     it "should copy the value to :preferred_serialization_format" do
@@ -97,6 +87,7 @@ describe "Puppet defaults" do
 
   it "should use the service user and group for the yamldir" do
     Puppet.settings.stubs(:service_user_available?).returns true
+    Puppet.settings.stubs(:service_group_available?).returns true
     Puppet.settings.setting(:yamldir).owner.should == Puppet.settings[:user]
     Puppet.settings.setting(:yamldir).group.should == Puppet.settings[:group]
   end
@@ -117,26 +108,15 @@ describe "Puppet defaults" do
     Puppet.settings.setting(:hostcert).owner.should == Puppet.settings[:user]
   end
 
-  it "should use a bind address of ''" do
-    Puppet.settings.clear
-    Puppet.settings[:bindaddress].should == ""
-  end
-
-  [:factdest].each do |setting|
-    it "should force the :factdest to be a directory" do
-      Puppet.settings[setting].should =~ /\/$/
-    end
-  end
-
   [:modulepath, :factpath].each do |setting|
     it "should configure '#{setting}' not to be a file setting, so multi-directory settings are acceptable" do
-      Puppet.settings.setting(setting).should be_instance_of(Puppet::Util::Settings::Setting)
+      Puppet.settings.setting(setting).should be_instance_of(Puppet::Settings::PathSetting)
     end
   end
 
   describe "on a Unix-like platform it", :as_platform => :posix do
     it "should add /usr/sbin and /sbin to the path if they're not there" do
-      withenv("PATH" => "/usr/bin#{File::PATH_SEPARATOR}/usr/local/bin") do
+      Puppet::Util.withenv("PATH" => "/usr/bin#{File::PATH_SEPARATOR}/usr/local/bin") do
         Puppet.settings[:path] = "none" # this causes it to ignore the setting
         ENV["PATH"].split(File::PATH_SEPARATOR).should be_include("/usr/sbin")
         ENV["PATH"].split(File::PATH_SEPARATOR).should be_include("/sbin")
@@ -147,7 +127,7 @@ describe "Puppet defaults" do
   describe "on a Windows-like platform it", :as_platform => :windows do
     it "should not add anything" do
       path = "c:\\windows\\system32#{File::PATH_SEPARATOR}c:\\windows"
-      withenv("PATH" => path) do
+      Puppet::Util.withenv("PATH" => path) do
         Puppet.settings[:path] = "none" # this causes it to ignore the setting
         ENV["PATH"].should == path
       end
@@ -183,8 +163,8 @@ describe "Puppet defaults" do
       Puppet.settings[:storeconfigs] = true
     end
 
-    it "should set the Node cache class to :store_configs" do
-      Puppet::Node.indirection.expects(:cache_class=).with(:store_configs)
+    it "does not change the Node cache" do
+      Puppet::Node.indirection.expects(:cache_class=).never
       Puppet.settings[:storeconfigs] = true
     end
   end
@@ -212,8 +192,8 @@ describe "Puppet defaults" do
       Puppet.settings[:storeconfigs] = true
     end
 
-    it "should set the Node cache class to :store_configs" do
-      Puppet::Node.indirection.expects(:cache_class=).with(:store_configs)
+    it "does not change the Node cache" do
+      Puppet::Node.indirection.expects(:cache_class=).never
       Puppet.settings[:storeconfigs] = true
     end
   end
@@ -247,21 +227,10 @@ describe "Puppet defaults" do
       Puppet.settings[:report_port].should == "1234"
     end
 
-    it "should set report_server when reportserver is set" do
-      Puppet.settings[:reportserver] = "reportserver"
-      Puppet.settings[:report_server].should == "reportserver"
-    end
-
     it "should use report_port when set" do
       Puppet.settings[:masterport] = "1234"
       Puppet.settings[:report_port] = "5678"
       Puppet.settings[:report_port].should == "5678"
-    end
-
-    it "should prefer report_server over reportserver" do
-      Puppet.settings[:reportserver] = "reportserver"
-      Puppet.settings[:report_server] = "report_server"
-      Puppet.settings[:report_server].should == "report_server"
     end
   end
 
@@ -327,10 +296,26 @@ describe "Puppet defaults" do
     end
   end
 
-  describe "puppetdlock" do
+  describe "when configuring hiera" do
+    it "should have a hiera_config setting" do
+      Puppet.settings[:hiera_config].should_not be_nil
+    end
+  end
+
+  describe "when configuring the data_binding terminus" do
+    it "should have a data_binding_terminus setting" do
+      Puppet.settings[:data_binding_terminus].should_not be_nil
+    end
+
+    it "should be set to hiera by default" do
+      Puppet.settings[:data_binding_terminus].should == :hiera
+    end
+  end
+
+  describe "agent_catalog_run_lockfile" do
     it "(#2888) is not a file setting so it is absent from the Settings catalog" do
-      Puppet.settings.setting(:puppetdlockfile).should_not be_a_kind_of Puppet::Util::Settings::FileSetting
-      Puppet.settings.setting(:puppetdlockfile).should be_a Puppet::Util::Settings::Setting
+      Puppet.settings.setting(:agent_catalog_run_lockfile).should_not be_a_kind_of Puppet::Settings::FileSetting
+      Puppet.settings.setting(:agent_catalog_run_lockfile).should be_a Puppet::Settings::StringSetting
     end
   end
 end

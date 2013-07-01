@@ -4,8 +4,6 @@ require 'net/http'
 require 'puppet/module_tool'
 
 describe Puppet::Forge do
-  include PuppetSpec::Files
-
   let(:response_body) do
   <<-EOF
     [
@@ -22,35 +20,41 @@ describe Puppet::Forge do
     ]
   EOF
   end
-  let(:response) { stub(:body => response_body, :code => '200') }
 
-  before do
+  let(:forge) { Puppet::Forge.new("test_agent", SemVer.new("v1.0.0")) }
+
+  def repository_responds_with(response)
     Puppet::Forge::Repository.any_instance.stubs(:make_http_request).returns(response)
-    Puppet::Forge::Repository.any_instance.stubs(:retrieve).returns("/tmp/foo")
   end
 
-  describe "the behavior of the search method" do
-    context "when there are matches for the search term" do
-      before do
-        Puppet::Forge::Repository.any_instance.stubs(:make_http_request).returns(response)
-      end
+  it "returns a list of matches from the forge when there are matches for the search term" do
+    response = stub(:body => response_body, :code => '200')
+    repository_responds_with(response)
 
-      it "should return a list of matches from the forge" do
-        Puppet::Forge.search('bacula').should == PSON.load(response_body)
-      end
+    forge.search('bacula').should == PSON.load(response_body)
+  end
+
+  context "when the connection to the forge fails" do
+    before :each do
+      repository_responds_with(stub(:body => '{}', :code => '404', :message => "not found"))
     end
 
-    context "when the connection to the forge fails" do
-      let(:response)  { stub(:body => '{}', :code => '404') }
+    it "raises an error for search" do
+      expect { forge.search('bacula') }.to raise_error Puppet::Forge::Errors::ResponseError, "Could not execute operation for 'bacula'. Detail: 404 not found."
+    end
 
-      it "should raise an error for search" do
-        lambda { Puppet::Forge.search('bacula') }.should raise_error RuntimeError
-      end
-
-      it "should raise an error for remote_dependency_info" do
-        lambda { Puppet::Forge.remote_dependency_info('puppetlabs', 'bacula', '0.0.1') }.should raise_error RuntimeError
-      end
+    it "raises an error for remote_dependency_info" do
+      expect { forge.remote_dependency_info('puppetlabs', 'bacula', '0.0.1') }.to raise_error Puppet::Forge::Errors::ResponseError, "Could not execute operation for 'puppetlabs/bacula'. Detail: 404 not found."
     end
   end
 
+  context "when the API responses with an error" do
+    before :each do
+      repository_responds_with(stub(:body => '{"error":"invalid module"}', :code => '410', :message => "Gone"))
+    end
+
+    it "raises an error for remote_dependency_info" do
+      expect { forge.remote_dependency_info('puppetlabs', 'bacula', '0.0.1') }.to raise_error Puppet::Forge::Errors::ResponseError, "Could not execute operation for 'puppetlabs/bacula'. Detail: invalid module / 410 Gone."
+    end
+  end
 end

@@ -58,7 +58,7 @@ Puppet::Type.type(:package).provide :gem, :parent => Puppet::Provider::Package d
         :provider => :gem
       }
     else
-      Puppet.warning "Could not match #{desc}"
+      Puppet.warning "Could not match #{desc}" unless desc.chomp.empty?
       nil
     end
   end
@@ -72,8 +72,6 @@ Puppet::Type.type(:package).provide :gem, :parent => Puppet::Provider::Package d
   def install(useversion = true)
     command = [command(:gemcmd), "install"]
     command << "-v" << resource[:ensure] if (! resource[:ensure].is_a? Symbol) and useversion
-    # Always include dependencies
-    command << "--include-dependencies"
 
     if source = resource[:source]
       begin

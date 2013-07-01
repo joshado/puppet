@@ -117,11 +117,17 @@ class Puppet::Transaction::ResourceHarness
     end
     event
   rescue => detail
-    puts detail.backtrace if Puppet[:trace]
+    # Execution will continue on StandardErrors, just store the event
+    Puppet.log_exception(detail)
     event.status = "failure"
 
     event.message = "change from #{property.is_to_s(current_value)} to #{property.should_to_s(property.should)} failed: #{detail}"
     event
+  rescue Exception => detail
+    # Execution will halt on Exceptions, they get raised to the application
+    event.status = "failure"
+    event.message = "change from #{property.is_to_s(current_value)} to #{property.should_to_s(property.should)} failed: #{detail}"
+    raise
   ensure
     event.send_log
   end
@@ -142,8 +148,7 @@ class Puppet::Transaction::ResourceHarness
     return status
   rescue => detail
     resource.fail "Could not create resource status: #{detail}" unless status
-    puts detail.backtrace if Puppet[:trace]
-    resource.err "Could not evaluate: #{detail}"
+    resource.log_exception(detail, "Could not evaluate: #{detail}")
     status.failed = true
     return status
   ensure

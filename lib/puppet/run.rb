@@ -3,7 +3,7 @@ require 'puppet/configurer'
 require 'puppet/indirector'
 
 # A basic class for running the agent.  Used by
-# puppetrun to kick off agents remotely.
+# `puppet kick` to kick off agents remotely.
 class Puppet::Run
   extend Puppet::Indirector
   indirects :run, :terminus_class => :local
@@ -11,7 +11,8 @@ class Puppet::Run
   attr_reader :status, :background, :options
 
   def agent
-    Puppet::Agent.new(Puppet::Configurer)
+    # Forking disabled for "puppet kick" runs
+    Puppet::Agent.new(Puppet::Configurer, false)
   end
 
   def background?
@@ -24,12 +25,23 @@ class Puppet::Run
       options.delete(:background)
     end
 
-    valid_options = [:tags, :ignoreschedules]
+    valid_options = [:tags, :ignoreschedules, :pluginsync]
     options.each do |key, value|
       raise ArgumentError, "Run does not accept #{key}" unless valid_options.include?(key)
     end
 
     @options = options
+  end
+
+  def initialize_from_hash(hash)
+    @options = {}
+
+    hash['options'].each do |key, value|
+      @options[key.to_sym] = value
+    end
+
+    @background = hash['background']
+    @status = hash['status']
   end
 
   def log_run
@@ -62,9 +74,20 @@ class Puppet::Run
     self
   end
 
-  def self.from_pson( pson )
-    options = {}
-    pson.each do |key, value|
+  def self.from_hash(hash)
+    obj = allocate
+    obj.initialize_from_hash(hash)
+    obj
+  end
+
+  def self.from_pson(hash)
+    if hash['options']
+      return from_hash(hash)
+    end
+
+    options = { :pluginsync => Puppet[:pluginsync] }
+
+    hash.each do |key, value|
       options[key.to_sym] = value
     end
 

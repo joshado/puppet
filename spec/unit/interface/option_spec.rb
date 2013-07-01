@@ -1,5 +1,4 @@
 require 'puppet/interface'
-require 'puppet/interface/option'
 
 describe Puppet::Interface::Option do
   let :face do Puppet::Interface.new(:option_testing, '0.0.1') end
@@ -62,6 +61,14 @@ describe Puppet::Interface::Option do
   it "should create an instance when given a face and name" do
     Puppet::Interface::Option.new(face, "--foo").
       should be_instance_of Puppet::Interface::Option
+  end
+
+  Puppet.settings.each do |name, value|
+    it "should fail when option #{name.inspect} already exists in puppet core" do
+      expect do
+        Puppet::Interface::Option.new(face, "--#{name}")
+      end.to raise_error ArgumentError, /already defined/
+    end
   end
 
   describe "#to_s" do

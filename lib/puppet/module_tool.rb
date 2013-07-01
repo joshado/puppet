@@ -4,9 +4,9 @@ require 'pathname'
 require 'fileutils'
 require 'puppet/util/colors'
 
-# Define tool
 module Puppet
   module ModuleTool
+    require 'puppet/module_tool/tar'
     extend Puppet::Util::Colors
 
     # Directory and names that should not be checksummed.
@@ -38,13 +38,32 @@ module Puppet
       end
     end
 
+    # Find the module root when given a path by checking each directory up from
+    # its current location until it finds one that contains a file called
+    # 'Modulefile'.
+    #
+    # @param path [Pathname, String] path to start from
+    # @return [Pathname, nil] the root path of the module directory or nil if
+    #   we cannot find one
     def self.find_module_root(path)
-      for dir in [path, Dir.pwd].compact
-        if File.exist?(File.join(dir, 'Modulefile'))
-          return dir
-        end
+      path = Pathname.new(path) if path.class == String
+
+      path.expand_path.ascend do |p|
+        return p if is_module_root?(p)
       end
-      raise ArgumentError, "Could not find a valid module at #{path ? path.inspect : 'current directory'}"
+
+      nil
+    end
+
+    # Analyse path to see if it is a module root directory by detecting a
+    # file named 'Modulefile' in the directory.
+    #
+    # @param path [Pathname, String] path to analyse
+    # @return [Boolean] true if the path is a module root, false otherwise
+    def self.is_module_root?(path)
+      path = Pathname.new(path) if path.class == String
+
+      FileTest.file?(path + 'Modulefile')
     end
 
     # Builds a formatted tree from a list of node hashes containing +:text+
@@ -81,6 +100,36 @@ module Puppet
         mod[:text] = "#{mod[:module]} (#{colorize(:cyan, version_string)})"
         mod[:text] += " [#{mod[:path]}]" unless mod[:path] == dir
         build_tree(mod[:dependencies], dir)
+      end
+    end
+
+    def self.set_option_defaults(options)
+      sep = File::PATH_SEPARATOR
+
+      if options[:environment]
+        Puppet.settings[:environment] = options[:environment]
+      else
+        options[:environment] = Puppet.settings[:environment]
+      end
+
+      if options[:modulepath]
+        Puppet.settings[:modulepath] = options[:modulepath]
+      else
+        # (#14872) make sure the module path of the desired environment is used
+        # when determining the default value of the --target-dir option
+        Puppet.settings[:modulepath] = options[:modulepath] =
+          Puppet.settings.value(:modulepath, options[:environment])
+      end
+
+      if options[:target_dir]
+        options[:target_dir] = File.expand_path(options[:target_dir])
+        # prepend the target dir to the module path
+        Puppet.settings[:modulepath] = options[:modulepath] =
+          options[:target_dir] + sep + options[:modulepath]
+      else
+        # default to the first component of the module path
+        options[:target_dir] =
+          File.expand_path(options[:modulepath].split(sep).first)
       end
     end
   end

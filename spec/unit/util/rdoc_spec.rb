@@ -1,12 +1,19 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 
 require 'puppet/util/rdoc'
 require 'rdoc/rdoc'
 
 describe Puppet::Util::RDoc do
+  it "should fail with a clear error without RDoc 1.*" do
+    Puppet.features.stubs(:rdoc1?).returns(false)
 
-  describe "when generating RDoc HTML documentation", :'fails_on_ruby_1.9.2' => true do
+    expect {
+      Puppet::Util::RDoc.rdoc("output", [])
+    }.to raise_error(/the version of RDoc .* is not supported/)
+  end
+
+  describe "when generating RDoc HTML documentation", :if => Puppet.features.rdoc1? do
     before :each do
       @rdoc = stub_everything 'rdoc'
       RDoc::RDoc.stubs(:new).returns(@rdoc)
@@ -14,7 +21,6 @@ describe Puppet::Util::RDoc do
 
     it "should tell the parser to ignore import" do
       Puppet.expects(:[]=).with(:ignoreimport, true)
-
       Puppet::Util::RDoc.rdoc("output", [])
     end
 
@@ -133,18 +139,6 @@ describe Puppet::Util::RDoc do
         Puppet::Util::RDoc.expects(:puts).with("im a class\n").in_sequence(byline)
         Puppet::Util::RDoc.expects(:puts).with("im a node\n").in_sequence(byline)
         Puppet::Util::RDoc.expects(:puts).with("im a define\n").in_sequence(byline)
-        # any other output must fail
-        Puppet::Util::RDoc.manifestdoc([my_fixture('basic.pp')])
-      end
-
-      it "should output resource documentation if needed" do
-        pending "#6634 being fixed"
-        Puppet.settings[:document_all] = true
-        byline = sequence('documentation outputs in line order')
-        Puppet::Util::RDoc.expects(:puts).with("im a class\n").in_sequence(byline)
-        Puppet::Util::RDoc.expects(:puts).with("im a node\n").in_sequence(byline)
-        Puppet::Util::RDoc.expects(:puts).with("im a define\n").in_sequence(byline)
-        Puppet::Util::RDoc.expects(:puts).with("im a resource\n").in_sequence(byline)
         # any other output must fail
         Puppet::Util::RDoc.manifestdoc([my_fixture('basic.pp')])
       end

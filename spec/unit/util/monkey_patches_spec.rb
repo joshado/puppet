@@ -1,4 +1,4 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 
 require 'puppet/util/monkey_patches'
@@ -39,25 +39,78 @@ describe "yaml deserialization" do
 end
 
 # In Ruby > 1.8.7 this is a builtin, otherwise we monkey patch the method in
-describe "Array#combination" do
-  it "should fail if wrong number of arguments given" do
-    lambda { [1,2,3].combination() }.should raise_error(ArgumentError, /wrong number/)
-    lambda { [1,2,3].combination(1,2) }.should raise_error(ArgumentError, /wrong number/)
+describe Array do
+  describe "#combination" do
+    it "should fail if wrong number of arguments given" do
+      expect { [1,2,3].combination() }.to raise_error(ArgumentError, /wrong number/)
+      expect { [1,2,3].combination(1,2) }.to raise_error(ArgumentError, /wrong number/)
+    end
+
+    it "should return an empty array if combo size than array size or negative" do
+      [1,2,3].combination(4).to_a.should == []
+      [1,2,3].combination(-1).to_a.should == []
+    end
+
+    it "should return an empty array with an empty array if combo size == 0" do
+      [1,2,3].combination(0).to_a.should == [[]]
+    end
+
+    it "should all provide all combinations of size passed in" do
+      [1,2,3,4].combination(1).to_a.should == [[1], [2], [3], [4]]
+      [1,2,3,4].combination(2).to_a.should == [[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]]
+      [1,2,3,4].combination(3).to_a.should == [[1, 2, 3], [1, 2, 4], [1, 3, 4], [2, 3, 4]]
+    end
   end
 
-  it "should return an empty array if combo size than array size or negative" do
-    [1,2,3].combination(4).to_a.should == []
-    [1,2,3].combination(-1).to_a.should == []
+  describe "#count" do
+    it "should equal length" do
+      [].count.should == [].length
+      [1].count.should == [1].length
+    end
   end
 
-  it "should return an empty array with an empty array if combo size == 0" do
-    [1,2,3].combination(0).to_a.should == [[]]
+  describe "#drop" do
+    it "should raise if asked to drop less than zero items" do
+      expect { [].drop(-1) }.to raise_error ArgumentError
+    end
+
+    it "should return the array when drop 0" do
+      [].drop(0).should == []
+      [1].drop(0).should == [1]
+      [1,2].drop(0).should == [1,2]
+    end
+
+    it "should return an empty array when dropping more items than the array" do
+      (1..10).each do |n|
+        [].drop(n).should == []
+        [1].drop(n).should == []
+      end
+    end
+
+    it "should drop the right number of items" do
+      [1,2,3].drop(0).should == [1,2,3]
+      [1,2,3].drop(1).should == [2,3]
+      [1,2,3].drop(2).should == [3]
+      [1,2,3].drop(3).should == []
+    end
   end
 
-  it "should all provide all combinations of size passed in" do
-    [1,2,3,4].combination(1).to_a.should == [[1], [2], [3], [4]]
-    [1,2,3,4].combination(2).to_a.should == [[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]]
-    [1,2,3,4].combination(3).to_a.should == [[1, 2, 3], [1, 2, 4], [1, 3, 4], [2, 3, 4]]
+  describe "#respond_to?" do
+    it "should return true for a standard method (each)" do
+      [].respond_to?(:each).should be_true
+    end
+
+    it "should return false for to_hash" do
+      [].respond_to?(:to_hash).should be_false
+    end
+
+    it "should accept one argument" do
+      lambda { [].respond_to?(:each) }.should_not raise_error
+    end
+
+    it "should accept two arguments" do
+      lambda { [].respond_to?(:each, false) }.should_not raise_error
+    end
   end
 end
 
@@ -91,13 +144,40 @@ describe IO do
       File.open(file, 'rb') {|f| f.read.should == content }
     end
 
-    it "should write using an offset" do
-      offset = 1
-      IO.binwrite(file, content, offset).should == content.length - offset
-      File.open(file, 'rb') {|f| f.read.should == content[offset..-1] }
+    (0..10).each do |offset|
+      it "should write correctly using an offset of #{offset}" do
+        IO.binwrite(file, content, offset).should == content.length
+        File.open(file, 'rb') {|f| f.read.should == ("\x00" * offset) + content }
+      end
     end
 
-    it "should raise an error if the file doesn't exist" do
+    context "truncation" do
+      let :input do "welcome to paradise, population ... YOU!" end
+      before :each do IO.binwrite(file, input) end
+
+      it "should truncate if no offset is given" do
+        IO.binwrite(file, "boo").should == 3
+        File.read(file).should == "boo"
+      end
+
+      (0..10).each do |offset|
+        it "should not truncate if an offset of #{offset} is given" do
+          expect = input.dup
+          expect[offset, 3] = "BAM"
+
+          IO.binwrite(file, "BAM", offset).should == 3
+          File.read(file).should == expect
+        end
+      end
+
+      it "should pad with NULL bytes if writing past EOF without truncate" do
+        expect = input + ("\x00" * 4) + "BAM"
+        IO.binwrite(file, "BAM", input.length + 4).should == 3
+        File.read(file).should == expect
+      end
+    end
+
+    it "should raise an error if the directory containing the file doesn't exist" do
       expect { IO.binwrite('/path/does/not/exist', 'foo') }.to raise_error(Errno::ENOENT)
     end
   end
@@ -177,5 +257,38 @@ describe Range do
       do_test( 5.to_f...10.to_f, other, expected )
       do_test( other, 5.to_f...10.to_f, expected )
     end
+  end
+end
+
+
+describe Object, "#instance_variables" do
+  it "should work with no instance variables" do
+    Object.new.instance_variables.should == []
+  end
+
+  it "should return symbols, not strings" do
+    o = Object.new
+    ["@foo", "@bar", "@baz"].map {|x| o.instance_variable_set(x, x) }
+    o.instance_variables.should =~ [:@foo, :@bar, :@baz]
+  end
+end
+
+describe OpenSSL::SSL::SSLContext do
+  it 'disables SSLv2 via the SSLContext#options bitmask' do
+    (subject.options & OpenSSL::SSL::OP_NO_SSLv2).should == OpenSSL::SSL::OP_NO_SSLv2
+  end
+  it 'explicitly disable SSLv2 ciphers using the ! prefix so they cannot be re-added' do
+    cipher_str = OpenSSL::SSL::SSLContext::DEFAULT_PARAMS[:ciphers]
+    cipher_str.split(':').should include('!SSLv2')
+  end
+  it 'sets parameters on initialization' do
+    described_class.any_instance.expects(:set_params)
+    subject
+  end
+  it 'has no ciphers with version SSLv2 enabled' do
+    ciphers = subject.ciphers.select do |name, version, bits, alg_bits|
+      /SSLv2/.match(version)
+    end
+    ciphers.should be_empty
   end
 end

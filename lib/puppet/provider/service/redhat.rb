@@ -8,16 +8,7 @@ Puppet::Type.type(:service).provide :redhat, :parent => :init, :source => :init 
 
   commands :chkconfig => "/sbin/chkconfig", :service => "/sbin/service"
 
-  defaultfor :operatingsystem => [:redhat, :fedora, :suse, :centos, :sles, :oel, :ovm]
-
-  def self.instances
-    # this exclude list is all from /sbin/service (5.x), but I did not exclude kudzu
-    self.get_services(['/etc/init.d'], ['functions', 'halt', 'killall', 'single', 'linuxconf', 'reboot', 'boot'])
-  end
-
-  def self.defpath
-    superclass.defpath
-  end
+  defaultfor :osfamily => [:redhat, :suse]
 
   # Remove the symlinks
   def disable

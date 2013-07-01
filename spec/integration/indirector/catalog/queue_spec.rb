@@ -1,12 +1,12 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 
 require 'puppet/resource/catalog'
 
-describe "Puppet::Resource::Catalog::Queue", :if => Puppet.features.pson? do
+describe "Puppet::Resource::Catalog::Queue" do
   before do
     Puppet::Resource::Catalog.indirection.terminus(:queue)
-    @catalog = Puppet::Resource::Catalog.new
+    @catalog = Puppet::Resource::Catalog.new("foo")
 
     @one = Puppet::Resource.new(:file, "/one")
     @two = Puppet::Resource.new(:file, "/two")
@@ -27,7 +27,7 @@ describe "Puppet::Resource::Catalog::Queue", :if => Puppet.features.pson? do
 
     client.expects(:publish_message).with(:catalog, @catalog.to_pson)
 
-    request = Puppet::Indirector::Request.new(:catalog, :save, "foo", :instance => @catalog)
+    request = Puppet::Indirector::Request.new(:catalog, :save, "foo", @catalog)
 
     terminus.save(request)
   end

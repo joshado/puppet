@@ -1,11 +1,12 @@
 require 'puppet/module'
-require 'puppet/parser/parser'
+#require 'puppet/parser/parser'
 
 # This is a silly central module for finding
 # different kinds of files while parsing.  This code
 # doesn't really belong in the Puppet::Module class,
 # but it doesn't really belong anywhere else, either.
-module Puppet::Parser::Files
+module Puppet; module Parser; module Files
+  
   module_function
 
   # Return a list of manifests (as absolute filenames) that match +pat+
@@ -28,9 +29,9 @@ module Puppet::Parser::Files
   end
 
   # Find the concrete file denoted by +file+. If +file+ is absolute,
-  # return it directly. Otherwise try to find it as a template in a
-  # module. If that fails, return it relative to the +templatedir+ config
-  # param.
+  # return it directly. Otherwise try to find relative to the +templatedir+
+  # config param.  If that fails try to find it as a template in a
+  # module.
   # In all cases, an absolute path is returned, which does not
   # necessarily refer to an existing file
   def find_template(template, environment = nil)
@@ -85,4 +86,4 @@ module Puppet::Parser::Files
     path.split(File::SEPARATOR, 2) unless path == "" or Puppet::Util.absolute_path?(path)
   end
 
-end
+end; end; end

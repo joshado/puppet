@@ -20,7 +20,10 @@ Puppet::Face.define(:module, '1.0.0') do
     arguments "<path>"
 
     when_invoked do |path, options|
-      root_path = Puppet::ModuleTool.find_module_root(path)
+      Puppet::ModuleTool.set_option_defaults options
+      unless root_path = Puppet::ModuleTool.find_module_root(path)
+        raise ArgumentError, "Could not find a valid module at #{path.inspect}"
+      end
       Puppet::ModuleTool::Applications::Checksummer.run(root_path, options)
     end
 

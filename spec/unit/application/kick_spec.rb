@@ -1,12 +1,12 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 
 require 'puppet/application/kick'
+require 'puppet/run'
+require 'puppet/util/ldap/connection'
 
 describe Puppet::Application::Kick, :if => Puppet.features.posix? do
-
   before :each do
-    require 'puppet/util/ldap/connection'
     Puppet::Util::Ldap::Connection.stubs(:new).returns(stub_everything)
     @kick = Puppet::Application[:kick]
     Puppet::Util::Log.stubs(:newdestination)
@@ -14,13 +14,12 @@ describe Puppet::Application::Kick, :if => Puppet.features.posix? do
 
   describe ".new" do
     it "should take a command-line object as an argument" do
-      command_line = stub_everything "command_line"
-      lambda{ Puppet::Application::Kick.new( command_line ) }.should_not raise_error
-    end
-  end
+      command_line = Puppet::Util::CommandLine.new("puppet", ['kick', 'myhost'])
+      app = Puppet::Application::Kick.new(command_line)
 
-  it "should ask Puppet::Application to not parse Puppet configuration file" do
-    @kick.should_parse_config?.should be_false
+      app.command_line.subcommand_name.should == "kick"
+      app.command_line.args.should == ['myhost']
+    end
   end
 
   it "should declare a main command" do
@@ -83,7 +82,7 @@ describe Puppet::Application::Kick, :if => Puppet.features.posix? do
       @kick.preinit
     end
 
-    [:all, :foreground, :debug, :ping, :test].each do |option|
+    [:all, :foreground, :debug, :ping, :test, :ignoreschedules].each do |option|
       it "should declare handle_#{option} method" do
         @kick.should respond_to("handle_#{option}".to_sym)
       end
@@ -121,9 +120,13 @@ describe Puppet::Application::Kick, :if => Puppet.features.posix? do
       @kick.hosts = []
       @kick.stubs(:trap)
       @kick.stubs(:puts)
-      Puppet.stubs(:parse_config)
 
       @kick.options.stubs(:[]).with(any_parameters)
+    end
+
+    it "should issue a warning that kick is deprecated" do
+      Puppet.expects(:warning).with() { |msg| msg =~ /kick is deprecated/ }
+      @kick.setup
     end
 
     it "should abort stating that kick is not supported on Windows" do
@@ -144,15 +147,9 @@ describe Puppet::Application::Kick, :if => Puppet.features.posix? do
       Puppet::Log.level.should == :info
     end
 
-    it "should Parse puppet config" do
-      Puppet.expects(:parse_config)
-
-      @kick.setup
-    end
-
     describe "when using the ldap node terminus" do
       before :each do
-        Puppet.stubs(:[]).with(:node_terminus).returns("ldap")
+        Puppet[:node_terminus] = "ldap"
       end
 
       it "should pass the fqdn option to search" do
@@ -227,6 +224,9 @@ describe Puppet::Application::Kick, :if => Puppet.features.posix? do
         @kick.options.stubs(:[]).with(:ignoreschedules).returns(false)
         @kick.options.stubs(:[]).with(:foreground).returns(false)
         @kick.options.stubs(:[]).with(:debug).returns(false)
+        @kick.options.stubs(:[]).with(:verbose).returns(false) # needed when logging is initialized
+        @kick.options.stubs(:[]).with(:setdest).returns(false) # needed when logging is initialized
+
         @kick.stubs(:print)
         @kick.preinit
         @kick.stubs(:parse_options)
@@ -256,7 +256,6 @@ describe Puppet::Application::Kick, :if => Puppet.features.posix? do
 
       describe "during call of run_for_host" do
         before do
-          require 'puppet/run'
           options = {
             :background => true, :ignoreschedules => false, :tags => []
           }
@@ -264,13 +263,16 @@ describe Puppet::Application::Kick, :if => Puppet.features.posix? do
           @agent_run = Puppet::Run.new( options.dup )
           @agent_run.stubs(:status).returns("success")
 
+          # ensure that we don't actually run the agent
+          @agent_run.stubs(:run).returns(@agent_run)
+
+          Puppet::Run.indirection.terminus_class = :local
           Puppet::Run.indirection.expects(:terminus_class=).with( :rest )
           Puppet::Run.expects(:new).with( options ).returns(@agent_run)
         end
 
         it "should call run on a Puppet::Run for the given host" do
           Puppet::Run.indirection.expects(:save).with(@agent_run, 'https://host:8139/production/run/host').returns(@agent_run)
-
           expect { @kick.run_for_host('host') }.to exit_with 0
         end
 

@@ -9,8 +9,7 @@ Puppet::Util::Log.newdesttype :syslog do
 
   def initialize
     Syslog.close if Syslog.opened?
-    name = Puppet[:name]
-    name = "puppet-#{name}" unless name =~ /puppet/
+    name = "puppet-#{Puppet.run_mode.name}"
 
     options = Syslog::LOG_PID | Syslog::LOG_NDELAY
 
@@ -30,12 +29,16 @@ Puppet::Util::Log.newdesttype :syslog do
     # cannot log a message with a '%' in it.  So, we get rid
     # of them.
     if msg.source == "Puppet"
-      @syslog.send(msg.level, msg.to_s.gsub("%", '%%'))
+      msg.to_s.split("\n").each do |line|
+        @syslog.send(msg.level, line.gsub("%", '%%'))
+      end
     else
-      @syslog.send(msg.level, "(%s) %s" % [msg.source.to_s.gsub("%", ""),
-          msg.to_s.gsub("%", '%%')
-        ]
-      )
+      msg.to_s.split("\n").each do |line|
+        @syslog.send(msg.level, "(%s) %s" % [msg.source.to_s.gsub("%", ""),
+            line.gsub("%", '%%')
+          ]
+        )
+      end
     end
   end
 end
@@ -73,6 +76,13 @@ Puppet::Util::Log.newdesttype :file do
     # create the log file, if it doesn't already exist
     file = File.open(path, File::WRONLY|File::CREAT|File::APPEND)
 
+    # Give ownership to the user and group puppet will run as
+    begin
+      FileUtils.chown(Puppet[:user], Puppet[:group], path) unless Puppet::Util::Platform.windows?
+    rescue ArgumentError, Errno::EPERM
+      Puppet.err "Unable to set ownership of log file"
+    end
+
     @file = file
 
     @autoflush = Puppet[:autoflush]
@@ -91,49 +101,28 @@ Puppet::Util::Log.newdesttype :console do
 
   def initialize
     # Flush output immediately.
-    $stdout.sync = true
-  end
-
-  def handle(msg)
-    if msg.source == "Puppet"
-      puts colorize(msg.level, "#{msg.level}: #{msg}")
-    else
-      puts colorize(msg.level, "#{msg.level}: #{msg.source}: #{msg}")
-    end
-  end
-end
-
-Puppet::Util::Log.newdesttype :telly_prototype_console do
-  require 'puppet/util/colors'
-  include Puppet::Util::Colors
-
-  def initialize
-    # Flush output immediately.
     $stderr.sync = true
     $stdout.sync = true
   end
 
   def handle(msg)
-    error_levels = {
-      :warning => 'Warning',
-      :err     => 'Error',
-      :alert   => 'Alert',
-      :emerg   => 'Emergency',
-      :crit    => 'Critical'
+    levels = {
+      :emerg   => { :name => 'Emergency', :color => :hred,  :stream => $stderr },
+      :alert   => { :name => 'Alert',     :color => :hred,  :stream => $stderr },
+      :crit    => { :name => 'Critical',  :color => :hred,  :stream => $stderr },
+      :err     => { :name => 'Error',     :color => :hred,  :stream => $stderr },
+      :warning => { :name => 'Warning',   :color => :hred,  :stream => $stderr },
+
+      :notice  => { :name => 'Notice',    :color => :reset, :stream => $stdout },
+      :info    => { :name => 'Info',      :color => :green, :stream => $stdout },
+      :debug   => { :name => 'Debug',     :color => :cyan,  :stream => $stdout },
     }
 
     str = msg.respond_to?(:multiline) ? msg.multiline : msg.to_s
+    str = msg.source == "Puppet" ? str : "#{msg.source}: #{str}"
 
-    case msg.level
-    when *error_levels.keys
-      $stderr.puts colorize(:hred, "#{error_levels[msg.level]}: #{str}")
-    when :info
-      $stdout.puts "#{colorize(:green, 'Info')}: #{str}"
-    when :debug
-      $stdout.puts "#{colorize(:cyan, 'Debug')}: #{str}"
-    else
-      $stdout.puts str
-    end
+    level = levels[msg.level]
+    level[:stream].puts colorize(level[:color], "#{level[:name]}: #{str}")
   end
 end
 
@@ -180,8 +169,7 @@ Puppet::Util::Log.newdesttype :host do
         # Add the hostname to the source
         @driver.addlog(tmp)
       rescue => detail
-        puts detail.backtrace if Puppet[:trace]
-        Puppet.err detail
+        Puppet.log_exception(detail)
         Puppet::Util::Log.close(self)
       end
     end

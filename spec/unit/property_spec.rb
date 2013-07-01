@@ -1,4 +1,4 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 require 'puppet/property'
 
@@ -138,6 +138,17 @@ describe Puppet::Property do
     it "should provide its path as the source description" do
       property.stubs(:path).returns "/my/param"
       property.event.source_description.should == "/my/param"
+    end
+
+    it "should have the 'invalidate_refreshes' value set if set on a value" do
+      property.stubs(:event_name).returns :my_event
+      property.stubs(:should).returns "foo"
+      foo = mock()
+      foo.expects(:invalidate_refreshes).returns(true)
+      collection = mock()
+      collection.expects(:match?).with("foo").returns(foo)
+      property.class.stubs(:value_collection).returns(collection)
+      property.event.invalidate_refreshes.should be_true
     end
   end
 

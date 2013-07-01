@@ -4,24 +4,7 @@ require 'puppet/util'
 class Puppet::Indirector::Exec < Puppet::Indirector::Terminus
   # Look for external node definitions.
   def find(request)
-    # Run the command.
-    unless output = query(request.key)
-      return nil
-    end
-
-    # Translate the output to ruby.
-    output
-  end
-
-  private
-
-  # Proxy the execution, so it's easier to test.
-  def execute(command, arguments)
-    Puppet::Util.execute(command,arguments)
-  end
-
-  # Call the external command and see if it returns our output.
-  def query(name)
+    name = request.key
     external_command = command
 
     # Make sure it's an arry
@@ -33,7 +16,7 @@ class Puppet::Indirector::Exec < Puppet::Indirector::Terminus
     # Add our name to it.
     external_command << name
     begin
-      output = execute(external_command, :combine => false)
+      output = execute(external_command, :failonfail => true, :combine => false)
     rescue Puppet::ExecutionFailure => detail
       raise Puppet::Error, "Failed to find #{name} via exec: #{detail}"
     end
@@ -44,5 +27,12 @@ class Puppet::Indirector::Exec < Puppet::Indirector::Terminus
     else
       return output
     end
+  end
+
+  private
+
+  # Proxy the execution, so it's easier to test.
+  def execute(command, arguments)
+    Puppet::Util::Execution.execute(command,arguments)
   end
 end

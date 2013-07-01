@@ -19,10 +19,19 @@ class Puppet::Node::Exec < Puppet::Indirector::Exec
     # Translate the output to ruby.
     result = translate(request.key, output)
 
+    # Set the requested environment if it wasn't overridden
+    # If we don't do this it gets set to the local default
+    result[:environment] ||= request.environment.name
+
     create_node(request.key, result)
   end
 
   private
+
+  # Proxy the execution, so it's easier to test.
+  def execute(command, arguments)
+    Puppet::Util::Execution.execute(command,arguments)
+  end
 
   # Turn our outputted objects into a Puppet::Node instance.
   def create_node(name, result)

@@ -1,4 +1,4 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 require 'stringio'
 
@@ -24,7 +24,7 @@ describe provider do
 
     it "should use dpkg-query" do
       provider.expects(:command).with(:dpkgquery).returns "myquery"
-      provider.expects(:execpipe).with("myquery -W --showformat '${Status} ${Package} ${Version}\\n'").yields StringIO.new(@fakeresult)
+      Puppet::Util::Execution.expects(:execpipe).with("myquery -W --showformat '${Status} ${Package} ${Version}\\n'").yields StringIO.new(@fakeresult)
 
       provider.instances
     end
@@ -33,7 +33,7 @@ describe provider do
       pipe = mock 'pipe'
       pipe.expects(:each).never
       pipe.expects(:each_line).yields @fakeresult
-      provider.expects(:execpipe).yields pipe
+      Puppet::Util::Execution.expects(:execpipe).yields pipe
 
       asdf = mock 'pkg1'
       provider.expects(:new).with(:ensure => "1.0", :error => "ok", :desired => "install", :name => "asdf", :status => "installed", :provider => :dpkg).returns asdf
@@ -45,7 +45,7 @@ describe provider do
       pipe = mock 'pipe'
       pipe.expects(:each).never
       pipe.expects(:each_line).yields "foobar"
-      provider.expects(:execpipe).yields pipe
+      Puppet::Util::Execution.expects(:execpipe).yields pipe
 
       Puppet.expects(:warning)
       provider.expects(:new).never
@@ -178,13 +178,13 @@ describe provider do
 
     it "should execute dpkg --set-selections when holding" do
       @provider.stubs(:install)
-      @provider.expects(:execute).with([:dpkg, '--set-selections'], {:stdinfile => @tempfile.path}).once
+      @provider.expects(:execute).with([:dpkg, '--set-selections'], {:failonfail => false, :combine => false, :stdinfile => @tempfile.path}).once
       @provider.hold
     end
 
     it "should execute dpkg --set-selections when unholding" do
       @provider.stubs(:install)
-      @provider.expects(:execute).with([:dpkg, '--set-selections'], {:stdinfile => @tempfile.path}).once
+      @provider.expects(:execute).with([:dpkg, '--set-selections'], {:failonfail => false, :combine => false, :stdinfile => @tempfile.path}).once
       @provider.hold
     end
   end

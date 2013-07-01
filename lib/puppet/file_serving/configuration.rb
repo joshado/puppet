@@ -29,16 +29,6 @@ class Puppet::FileServing::Configuration
   def find_mount(mount_name, environment)
     # Reparse the configuration if necessary.
     readconfig
-
-    if mount = mounts[mount_name]
-      return mount
-    end
-
-    if environment.module(mount_name)
-      Puppet::Util::Warnings.notice_once "DEPRECATION NOTICE: Files found in modules without specifying 'modules' in file path will be deprecated in the next major release.  Please fix module '#{mount_name}' when no 0.24.x clients are present"
-      return mounts["modules"]
-    end
-
     # This can be nil.
     mounts[mount_name]
   end
@@ -111,8 +101,7 @@ class Puppet::FileServing::Configuration
       newmounts = @parser.parse
       @mounts = newmounts
     rescue => detail
-      puts detail.backtrace if Puppet[:trace]
-      Puppet.err "Error parsing fileserver configuration: #{detail}; using old configuration"
+      Puppet.log_exception(detail, "Error parsing fileserver configuration: #{detail}; using old configuration")
     end
 
   ensure

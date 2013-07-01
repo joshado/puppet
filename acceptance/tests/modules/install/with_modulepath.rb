@@ -1,3 +1,5 @@
+# encoding: UTF-8
+
 test_name "puppet module install (with modulepath)"
 
 step 'Setup'
@@ -14,22 +16,22 @@ end
 step "Install a module with relative modulepath"
 on master, "cd /etc/puppet/modules2 && puppet module install pmtacceptance-nginx --modulepath=." do
   assert_output <<-OUTPUT
-    Preparing to install into /etc/puppet/modules2 ...
-    Downloading from http://forge.puppetlabs.com ...
-    Installing -- do not interrupt ...
+    \e[mNotice: Preparing to install into /etc/puppet/modules2 ...\e[0m
+    \e[mNotice: Downloading from https://forge.puppetlabs.com ...\e[0m
+    \e[mNotice: Installing -- do not interrupt ...\e[0m
     /etc/puppet/modules2
     └── pmtacceptance-nginx (\e[0;36mv0.0.1\e[0m)
   OUTPUT
 end
 on master, '[ -d /etc/puppet/modules2/nginx ]'
-apply_manifest_on master, "file { ['/etc/puppet/modules2']: ensure => directory, recurse => true, purge => true, force => true }"
 
 step "Install a module with absolute modulepath"
+on master, "test -d /etc/puppet/modules2/nginx && rm -rf /etc/puppet/modules2/nginx"
 on master, puppet('module install pmtacceptance-nginx --modulepath=/etc/puppet/modules2') do
   assert_output <<-OUTPUT
-    Preparing to install into /etc/puppet/modules2 ...
-    Downloading from http://forge.puppetlabs.com ...
-    Installing -- do not interrupt ...
+    \e[mNotice: Preparing to install into /etc/puppet/modules2 ...\e[0m
+    \e[mNotice: Downloading from https://forge.puppetlabs.com ...\e[0m
+    \e[mNotice: Installing -- do not interrupt ...\e[0m
     /etc/puppet/modules2
     └── pmtacceptance-nginx (\e[0;36mv0.0.1\e[0m)
   OUTPUT

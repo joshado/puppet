@@ -4,8 +4,19 @@ require 'pathname'
 require 'uri'
 require 'puppet/forge/cache'
 require 'puppet/forge/repository'
+require 'puppet/forge/errors'
 
-module Puppet::Forge
+class Puppet::Forge
+  include Puppet::Forge::Errors
+
+  # +consumer_name+ is a name to be used for identifying the consumer of the
+  # forge and +consumer_semver+ is a SemVer object to identify the version of
+  # the consumer
+  def initialize(consumer_name, consumer_semver)
+    @consumer_name = consumer_name
+    @consumer_semver = consumer_semver
+  end
+
   # Return a list of module metadata hashes that match the search query.
   # This return value is used by the module_tool face install search,
   # and displayed to on the console.
@@ -25,42 +36,60 @@ module Puppet::Forge
   #   }
   # ]
   #
-  def self.search(term)
-    server = Puppet.settings[:module_repository].sub(/^(?!https?:\/\/)/, 'http://')
+  # @param term [String] search term
+  # @return [Array] modules found
+  # @raise [Puppet::Forge::Errors::CommunicationError] if there is a network
+  #   related error
+  # @raise [Puppet::Forge::Errors::SSLVerifyError] if there is a problem
+  #   verifying the remote SSL certificate
+  # @raise [Puppet::Forge::Errors::ResponseError] if the repository returns a
+  #   bad HTTP response
+  def search(term)
+    server = Puppet.settings[:module_repository]
     Puppet.notice "Searching #{server} ..."
-    request = Net::HTTP::Get.new("/modules.json?q=#{URI.escape(term)}")
-    response = repository.make_http_request(request)
+    response = repository.make_http_request("/modules.json?q=#{URI.escape(term)}")
 
     case response.code
     when "200"
       matches = PSON.parse(response.body)
     else
-      raise RuntimeError, "Could not execute search (HTTP #{response.code})"
-      matches = []
+      raise ResponseError.new(:uri => uri.to_s, :input => term, :response => response)
     end
 
     matches
   end
 
-  def self.remote_dependency_info(author, mod_name, version)
+  # Return a list of module metadata hashes for the module requested and all
+  # of its dependencies.
+  #
+  # @param author [String] module's author name
+  # @param mod_name [String] module name
+  # @param version [String] optional module version number
+  # @return [Array] module and dependency metadata
+  # @raise [Puppet::Forge::Errors::CommunicationError] if there is a network
+  #   related error
+  # @raise [Puppet::Forge::Errors::SSLVerifyError] if there is a problem
+  #   verifying the remote SSL certificate
+  # @raise [Puppet::Forge::Errors::ResponseError] if the repository returns
+  #   an error in its API response or a bad HTTP response
+  def remote_dependency_info(author, mod_name, version)
     version_string = version ? "&version=#{version}" : ''
-    request = Net::HTTP::Get.new("/api/v1/releases.json?module=#{author}/#{mod_name}" + version_string)
-    response = repository.make_http_request(request)
+    response = repository.make_http_request("/api/v1/releases.json?module=#{author}/#{mod_name}#{version_string}")
     json = PSON.parse(response.body) rescue {}
     case response.code
     when "200"
       return json
     else
-      error = json['error'] || ''
-      if error =~ /^Module #{author}\/#{mod_name} has no release/
+      error = json['error']
+      if error && error =~ /^Module #{author}\/#{mod_name} has no release/
         return []
       else
-        raise RuntimeError, "Could not find release information for this module (#{author}/#{mod_name}) (HTTP #{response.code})"
+        raise ResponseError.new(:uri => uri.to_s, :input => "#{author}/#{mod_name}", :message => error, :response => response)
       end
     end
   end
 
-  def self.get_release_packages_from_repository(install_list)
+  def get_release_packages_from_repository(install_list)
     install_list.map do |release|
       modname, version, file = release
       cache_path = nil
@@ -68,7 +97,7 @@ module Puppet::Forge
         begin
           cache_path = repository.retrieve(file)
         rescue OpenURI::HTTPError => e
-          raise RuntimeError, "Could not download module: #{e.message}"
+          raise HttpResponseError.new(:uri => uri.to_s, :input => modname, :message => e.message)
         end
       else
         raise RuntimeError, "Malformed response from module repository."
@@ -80,7 +109,7 @@ module Puppet::Forge
   # Locate a module release package on the local filesystem and move it
   # into the `Puppet.settings[:module_working_dir]`. Do not unpack it, just
   # return the location of the package on disk.
-  def self.get_release_package_from_filesystem(filename)
+  def get_release_package_from_filesystem(filename)
     if File.exist?(File.expand_path(filename))
       repository = Repository.new('file:///')
       uri = URI.parse("file://#{URI.escape(File.expand_path(filename))}")
@@ -92,7 +121,17 @@ module Puppet::Forge
     cache_path
   end
 
-  def self.repository
-    @repository ||= Puppet::Forge::Repository.new
+  def retrieve(release)
+    repository.retrieve(release)
   end
+
+  def uri
+    repository.uri
+  end
+
+  def repository
+    version = "#{@consumer_name}/#{[@consumer_semver.major, @consumer_semver.minor, @consumer_semver.tiny].join('.')}#{@consumer_semver.special}"
+    @repository ||= Puppet::Forge::Repository.new(Puppet[:module_repository], version)
+  end
+  private :repository
 end

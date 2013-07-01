@@ -1,4 +1,4 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 
 require 'puppet/file_serving/metadata'
@@ -33,14 +33,6 @@ describe Puppet::FileServing::Metadata do
   describe "when serializing" do
     let(:metadata) { Puppet::FileServing::Metadata.new(foobar) }
 
-    it "should perform pson serialization by calling to_pson on it's pson_data_hash" do
-      pdh = mock "data hash"
-      pdh_as_pson = mock "data as pson"
-      metadata.expects(:to_pson_data_hash).returns pdh
-      pdh.expects(:to_pson).returns pdh_as_pson
-      metadata.to_pson.should == pdh_as_pson
-    end
-
     it "should serialize as FileMetadata" do
       metadata.to_pson_data_hash['document_type'].should == "FileMetadata"
     end
@@ -49,48 +41,48 @@ describe Puppet::FileServing::Metadata do
       metadata.to_pson_data_hash['data'].keys.sort.should == %w{ path relative_path links owner group mode checksum type destination }.sort
     end
 
-    it "should pass the path in the hash verbatum" do
-      metadata.to_pson_data_hash['data']['path'] == metadata.path
+    it "should pass the path in the hash verbatim" do
+      metadata.to_pson_data_hash['data']['path'].should == metadata.path
     end
 
-    it "should pass the relative_path in the hash verbatum" do
-      metadata.to_pson_data_hash['data']['relative_path'] == metadata.relative_path
+    it "should pass the relative_path in the hash verbatim" do
+      metadata.to_pson_data_hash['data']['relative_path'].should == metadata.relative_path
     end
 
-    it "should pass the links in the hash verbatum" do
-      metadata.to_pson_data_hash['data']['links'] == metadata.links
+    it "should pass the links in the hash verbatim" do
+      metadata.to_pson_data_hash['data']['links'].should == metadata.links
     end
 
-    it "should pass the path owner in the hash verbatum" do
-      metadata.to_pson_data_hash['data']['owner'] == metadata.owner
+    it "should pass the path owner in the hash verbatim" do
+      metadata.to_pson_data_hash['data']['owner'].should == metadata.owner
     end
 
-    it "should pass the group in the hash verbatum" do
-      metadata.to_pson_data_hash['data']['group'] == metadata.group
+    it "should pass the group in the hash verbatim" do
+      metadata.to_pson_data_hash['data']['group'].should == metadata.group
     end
 
-    it "should pass the mode in the hash verbatum" do
-      metadata.to_pson_data_hash['data']['mode'] == metadata.mode
+    it "should pass the mode in the hash verbatim" do
+      metadata.to_pson_data_hash['data']['mode'].should == metadata.mode
     end
 
-    it "should pass the ftype in the hash verbatum as the 'type'" do
-      metadata.to_pson_data_hash['data']['type'] == metadata.ftype
+    it "should pass the ftype in the hash verbatim as the 'type'" do
+      metadata.to_pson_data_hash['data']['type'].should == metadata.ftype
     end
 
-    it "should pass the destination verbatum" do
-      metadata.to_pson_data_hash['data']['destination'] == metadata.destination
+    it "should pass the destination verbatim" do
+      metadata.to_pson_data_hash['data']['destination'].should == metadata.destination
     end
 
     it "should pass the checksum in the hash as a nested hash" do
       metadata.to_pson_data_hash['data']['checksum'].should be_is_a(Hash)
     end
 
-    it "should pass the checksum_type in the hash verbatum as the checksum's type" do
-      metadata.to_pson_data_hash['data']['checksum']['type'] == metadata.checksum_type
+    it "should pass the checksum_type in the hash verbatim as the checksum's type" do
+      metadata.to_pson_data_hash['data']['checksum']['type'].should == metadata.checksum_type
     end
 
-    it "should pass the checksum in the hash verbatum as the checksum's value" do
-      metadata.to_pson_data_hash['data']['checksum']['value'] == metadata.checksum
+    it "should pass the checksum in the hash verbatim as the checksum's value" do
+      metadata.to_pson_data_hash['data']['checksum']['value'].should == metadata.checksum
     end
 
   end
@@ -112,10 +104,6 @@ describe Puppet::FileServing::Metadata do
 
         before :each do
           FileUtils.touch(path)
-        end
-
-        it "should be able to produce xmlrpc-style attribute information" do
-          metadata.should respond_to(:attributes_with_tabs)
         end
 
         it "should set the owner to the file's current owner" do
@@ -150,12 +138,6 @@ describe Puppet::FileServing::Metadata do
             metadata.collect
             metadata.checksum.should == "{mtime}#{@time}"
           end
-
-          it "should produce tab-separated mode, type, owner, group, and checksum for xmlrpc" do
-            set_mode(0755, path)
-
-            metadata.attributes_with_tabs.should == "#{0755.to_s}\tfile\t#{owner}\t#{group}\t{md5}#{checksum}"
-          end
         end
       end
 
@@ -178,13 +160,6 @@ describe Puppet::FileServing::Metadata do
           metadata.collect
           metadata.checksum.should == "{ctime}#{time}"
         end
-
-        it "should produce tab-separated mode, type, owner, group, and checksum for xmlrpc" do
-          set_mode(0755, path)
-          metadata.collect
-
-          metadata.attributes_with_tabs.should == "#{0755.to_s}\tdirectory\t#{owner}\t#{group}\t{ctime}#{time.to_s}"
-        end
       end
 
       describe "when managing links", :unless => Puppet.features.microsoft_windows? do
@@ -203,15 +178,6 @@ describe Puppet::FileServing::Metadata do
 
         it "should read links instead of returning their checksums" do
           metadata.destination.should == target
-        end
-
-        pending "should produce tab-separated mode, type, owner, group, and destination for xmlrpc" do
-          # "We'd like this to be true, but we need to always collect the checksum because in the server/client/server round trip we lose the distintion between manage and follow."
-          metadata.attributes_with_tabs.should == "#{0755}\tlink\t#{owner}\t#{group}\t#{target}"
-        end
-
-        it "should produce tab-separated mode, type, owner, group, checksum, and destination for xmlrpc" do
-          metadata.attributes_with_tabs.should == "#{fmode}\tlink\t#{owner}\t#{group}\t{md5}eb9c2bf0eb63f3a7bc0ea37ef18aeba5\t#{target}"
         end
       end
     end

@@ -1,4 +1,4 @@
-#!/usr/bin/env rspec
+#! /usr/bin/env ruby
 require 'spec_helper'
 
 describe Puppet::Type.type(:group) do
@@ -32,12 +32,12 @@ describe Puppet::Type.type(:group) do
     end
   end
 
-  it "should have a boolean method for determining if duplicates are allowed", :'fails_on_ruby_1.9.2' => true do
-    @class.new(:name => "foo").methods.should be_include("allowdupe?")
+  it "should have a boolean method for determining if duplicates are allowed" do
+    @class.new(:name => "foo").must respond_to "allowdupe?"
   end
 
-  it "should have a boolean method for determining if system groups are allowed", :'fails_on_ruby_1.9.2' => true do
-    @class.new(:name => "foo").methods.should be_include("system?")
+  it "should have a boolean method for determining if system groups are allowed" do
+    @class.new(:name => "foo").must respond_to "system?"
   end
 
   it "should call 'create' to create the group" do
@@ -50,5 +50,15 @@ describe Puppet::Type.type(:group) do
     group = @class.new(:name => "foo", :ensure => :absent)
     group.provider.expects(:delete)
     group.parameter(:ensure).sync
+  end
+
+  it "delegates the existance check to its provider" do
+    provider = @class.provide(:testing) {}
+    provider_instance = provider.new
+    provider_instance.expects(:exists?).returns true
+
+    type = @class.new(:name => "group", :provider => provider_instance)
+
+    type.exists?.should == true
   end
 end
