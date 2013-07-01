@@ -3,17 +3,14 @@ module Puppet::Scheduler
     attr_reader :splay
 
     def initialize(run_interval, splay_limit, &block)
-      puts "Run interval is #{run_interval}"
-      puts "Splay limit is #{splay_limit}"
-
       @splay = calculate_splay(splay_limit)
+
+      Puppet.info("Splay is #{@splay}")
 
       super(run_interval, &block)
     end
 
     def interval_to_next_from(time)
-      puts "Interval to next run from #{time} called."
-
       # Work out the offset into the current scheduler interval
       # where our next_run falls
       next_run = Time.at((time.to_i / run_interval).to_i * run_interval) + @splay
@@ -26,7 +23,7 @@ module Puppet::Scheduler
         next_run
       end
 
-      puts "Next run is at #{next_run}"
+      Puppet.info("Next run is at #{next_run}")
 
       # Now, calculate the interval
       next_run - time
@@ -49,10 +46,10 @@ module Puppet::Scheduler
     #
     # Returns an integer that should be (0..limit)
     def calculate_splay(limit)
-      Puppet.err("DEBUG: Splay limit is #{limit}")
-      rand(limit + 1).tap { |value|
-        puts "splay is #{value}"
-      }
+      Digest::MD5.hexdigest(Facter[:fqdn].value).to_i(16) % limit
+    rescue
+      Puppet.err("Failed to use FQDN-based splay - falling back on random")
+      rand(limit + 1)
     end
   end
 end
